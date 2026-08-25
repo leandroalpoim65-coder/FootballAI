@@ -1,0 +1,34 @@
+{
+  "generated_at": "2026-07-17T17:56:23.729304",
+  "predictions_path": "reports\\clv_predictions_over25.csv",
+  "bootstrap_samples": 10000,
+  "confidence_level": 0.95,
+  "random_seed": 42,
+  "minimum_group_selections": 50,
+  "rows_in_report": 25896,
+  "selections_analyzed": 4168,
+  "detected_columns": {
+    "signal_column": "signal",
+    "clv_column": "clv",
+    "profit_column": "profit",
+    "open_odd_column": "odd_over25_open",
+    "close_odd_column": "odd_over25_close",
+    "target_column": "over25",
+    "league_column": "league",
+    "season_column": "season"
+  },
+  "global_statistics": {
+    "selections": 4168,
+    "clv_mean": 0.0056034133025976195,
+    "clv_median": 0.00619200981519805,
+    "clv_positive_rate": 0.5309500959692899,
+    "clv_ci_lower": 0.004188765951652499,
+    "clv_ci_upper": 0.007024918861190207,
+    "roi": -0.020796545105566222,
+    "profit": -86.68,
+    "roi_ci_lower": -0.04551637476007677,
+    "roi_ci_upper": 0.00437320057581571,
+    "probability_clv_mean_positive": 1.0,
+    "probability_roi_positive": 0.054
+  }
+}
