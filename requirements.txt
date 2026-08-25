@@ -3,3 +3,4 @@ libsql
 numpy
 pandas
 scikit-learn
+streamlit
