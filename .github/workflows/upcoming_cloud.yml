@@ -12,7 +12,7 @@ concurrency:
 jobs:
   update-upcoming:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -33,3 +33,9 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python download_upcoming_cloud.py
+
+      - name: Run Paper Trade in Turso
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python paper_trade_cloud.py
