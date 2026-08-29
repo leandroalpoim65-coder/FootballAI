@@ -31,7 +31,6 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           echo "=========================================="
           echo " 1/2 — ESPN ROBUST RESULTS"
@@ -40,6 +39,6 @@ jobs:
 
           echo
           echo "=========================================="
-          echo " 2/2 — FOOTBALL-DATA / ESPN / ODDS API"
+          echo " 2/2 — FOOTBALL-DATA / ESPN"
           echo "=========================================="
           python update_results_cloud.py
