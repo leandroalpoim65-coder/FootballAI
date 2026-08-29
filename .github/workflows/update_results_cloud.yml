@@ -12,7 +12,7 @@ concurrency:
 jobs:
   update-results:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -31,4 +31,5 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python update_results_cloud.py
