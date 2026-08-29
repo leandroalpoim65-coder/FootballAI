@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -17,7 +20,13 @@ APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
 ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
 ODDS_API_REGION = "eu"
 ODDS_API_MARKET = "totals"
-REFRESH_WINDOW_MINUTES = 120
+
+# A CLOSE só precisa de ser observada muito perto do kickoff. Antes usávamos
+# 120 minutos, o que gastava demasiados créditos ao executar de 15 em 15 min.
+REFRESH_WINDOW_MINUTES = 30
+MIN_REQUERY_IMPROVEMENT_MINUTES = 12
+EXCELLENT_CLOSE_MINUTES = 8
+
 CLOSING_SOURCE = "The Odds API / EU average totals 2.5"
 
 LEAGUE_SPORT_KEY = {
@@ -44,16 +53,56 @@ LEAGUE_SPORT_KEY = {
 QUOTA_ERROR_MARKERS = (
     "OUT_OF_USAGE_CREDITS",
     "Usage quota has been reached",
+    "usage quota",
 )
+
+TEAM_ALIASES = {
+    "ein frankfurt": "eintracht frankfurt",
+    "eintracht frankfurt": "eintracht frankfurt",
+    "nurnberg": "nurnberg",
+    "1 nurnberg": "nurnberg",
+    "arminia bielefeld": "bielefeld",
+    "bielefeld": "bielefeld",
+    "nec nijmegen": "nijmegen",
+    "nijmegen": "nijmegen",
+    "pec zwolle": "zwolle",
+    "zwolle": "zwolle",
+    "real sociedad": "sociedad",
+    "sociedad": "sociedad",
+    "rcd espanyol": "espanol",
+    "espanyol": "espanol",
+    "espanol": "espanol",
+    "standard liege": "standard",
+    "standard de liege": "standard",
+    "standard": "standard",
+    "oh leuven": "oud heverlee leuven",
+    "oud heverlee leuven": "oud heverlee leuven",
+    "caykur rizespor": "rizespor",
+    "rizespor": "rizespor",
+    "goztepe sk": "goztepe",
+    "goztepe": "goztepe",
+    "paris saint germain": "psg",
+    "paris sg": "psg",
+    "psg": "psg",
+    "sporting cp": "sporting lisbon",
+    "sporting clube de portugal": "sporting lisbon",
+    "sporting lisbon": "sporting lisbon",
+    "sp lisbon": "sporting lisbon",
+    "sporting gijon": "sporting gijon",
+    "sporting de gijon": "sporting gijon",
+    "sp gijon": "sporting gijon",
+}
 
 
 def connect_turso():
     url = os.getenv("TURSO_DATABASE_URL", "").strip()
     token = os.getenv("TURSO_AUTH_TOKEN", "").strip()
+
     if not url:
         raise RuntimeError("TURSO_DATABASE_URL não configurada.")
     if not token:
         raise RuntimeError("TURSO_AUTH_TOKEN não configurado.")
+
     return libsql.connect(database=url, auth_token=token)
 
 
@@ -69,6 +118,7 @@ def find_paper_table(connection) -> str | None:
         "SELECT name FROM sqlite_master WHERE type = 'table'"
     ).fetchall()
     existing = {row[0] for row in rows}
+
     for candidate in (
         "paper_trades",
         "paper_trade",
@@ -77,6 +127,7 @@ def find_paper_table(connection) -> str | None:
     ):
         if candidate in existing:
             return candidate
+
     return None
 
 
@@ -94,6 +145,7 @@ def add_column_if_missing(
 ) -> None:
     if name in columns:
         return
+
     connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
     columns.add(name)
 
@@ -101,9 +153,11 @@ def add_column_if_missing(
 def parse_fixture_datetime(date_value, time_value) -> datetime | None:
     if date_value is None:
         return None
+
     date_text = str(date_value).strip()
     if not date_text:
         return None
+
     time_text = "00:00" if time_value is None else str(time_value).strip()
     if not time_text:
         time_text = "00:00"
@@ -116,24 +170,30 @@ def parse_fixture_datetime(date_value, time_value) -> datetime | None:
             parsed = datetime.fromisoformat(candidate)
         except ValueError:
             continue
+
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=APP_TIMEZONE)
         return parsed.astimezone(APP_TIMEZONE)
+
     return None
 
 
 def parse_api_datetime(value) -> datetime | None:
     if value is None:
         return None
+
     text = str(value).strip()
     if not text:
         return None
+
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
+
     return parsed.astimezone(APP_TIMEZONE)
 
 
@@ -142,6 +202,7 @@ def http_get_json(url: str) -> tuple[object, dict[str, str]]:
         url,
         headers={"User-Agent": "Mozilla/5.0 FootballAI/Cloud"},
     )
+
     try:
         with urlopen(request, timeout=30) as response:
             content = response.read()
@@ -154,38 +215,56 @@ def http_get_json(url: str) -> tuple[object, dict[str, str]]:
             detail = error.read().decode("utf-8", errors="replace")
         except Exception:
             detail = ""
-        raise RuntimeError(
-            f"HTTP {error.code}: {detail[:400]}"
-        ) from error
+        raise RuntimeError(f"HTTP {error.code}: {detail[:400]}") from error
     except URLError as error:
-        raise RuntimeError(
-            f"Erro de ligação: {error.reason}"
-        ) from error
+        raise RuntimeError(f"Erro de ligação: {error.reason}") from error
 
     try:
         payload = json.loads(content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimeError("Resposta JSON inválida.") from error
+
     return payload, headers
 
 
 def is_quota_error(error: Exception) -> bool:
-    text = str(error)
-    return any(marker in text for marker in QUOTA_ERROR_MARKERS)
+    text = str(error).casefold()
+    return any(marker.casefold() in text for marker in QUOTA_ERROR_MARKERS)
 
 
-def canonical_team(league: str, value) -> str | None:
+def normalize_name(value: object) -> str:
+    text = "" if value is None else str(value)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(
+        char for char in text if not unicodedata.combining(char)
+    )
+    text = text.lower().replace("&", " and ")
+    text = re.sub(r"\butd\b", " united ", text)
+    text = re.sub(
+        r"\b(fc|cf|afc|sc|fk|ac|sv|rcd|cd|club)\b",
+        " ",
+        text,
+    )
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def canonical_team(league: str, value) -> str:
     normalized = normalize_team(league, value)
-    if normalized is None:
-        return None
-    text = str(normalized).strip()
-    return text.casefold() if text else None
+    name = normalize_name(normalized)
+    return TEAM_ALIASES.get(name, name)
 
 
-def teams_match(league: str, left, right) -> bool:
+def team_similarity(league: str, left, right) -> float:
     a = canonical_team(league, left)
     b = canonical_team(league, right)
-    return a is not None and b is not None and a == b
+
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+
+    return SequenceMatcher(None, a, b).ratio()
 
 
 def find_unique_api_event(
@@ -195,7 +274,7 @@ def find_unique_api_event(
     home_team,
     away_team,
 ) -> dict | None:
-    matches: list[dict] = []
+    candidates: list[tuple[float, dict]] = []
 
     for event in events:
         if not isinstance(event, dict):
@@ -211,23 +290,32 @@ def find_unique_api_event(
         if abs((kickoff_local - fixture_datetime).total_seconds()) > 3 * 3600:
             continue
 
-        if not teams_match(
+        home_similarity = team_similarity(
             canonical_league,
             event.get("home_team"),
             home_team,
-        ):
-            continue
-
-        if not teams_match(
+        )
+        away_similarity = team_similarity(
             canonical_league,
             event.get("away_team"),
             away_team,
-        ):
+        )
+
+        if home_similarity < 0.78 or away_similarity < 0.78:
             continue
 
-        matches.append(event)
+        candidates.append((home_similarity + away_similarity, event))
 
-    return matches[0] if len(matches) == 1 else None
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    if len(candidates) >= 2:
+        if candidates[0][0] - candidates[1][0] < 0.08:
+            return None
+
+    return candidates[0][1]
 
 
 def extract_average_totals_25(
@@ -249,9 +337,7 @@ def extract_average_totals_25(
             continue
 
         for market in markets:
-            if not isinstance(market, dict):
-                continue
-            if market.get("key") != "totals":
+            if not isinstance(market, dict) or market.get("key") != "totals":
                 continue
 
             outcomes = market.get("outcomes", [])
@@ -287,6 +373,30 @@ def extract_average_totals_25(
     )
 
 
+def safe_float(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
+
+
+def should_query_row(row: dict, minutes_to_start: float) -> bool:
+    old_minutes = safe_float(row.get("closing_minutes_before_kickoff"))
+
+    if old_minutes is None:
+        return True
+
+    # Já temos uma observação excelente muito perto do kickoff.
+    if old_minutes <= EXCELLENT_CLOSE_MINUTES:
+        return False
+
+    # Só voltamos a gastar crédito se a nova tentativa for materialmente
+    # mais próxima do kickoff.
+    improvement = old_minutes - minutes_to_start
+    return improvement >= MIN_REQUERY_IMPROVEMENT_MINUTES
+
+
 def main() -> None:
     print()
     print("==========================================")
@@ -304,6 +414,8 @@ def main() -> None:
 
     print("Base de dados             : Turso Cloud")
     print("Timezone                  : Europe/Lisbon")
+    print(f"Janela CLOSE pré-jogo     : 0-{REFRESH_WINDOW_MINUTES} min")
+    print("Quota Odds API            : reservada só para CLOSE")
 
     try:
         table = find_paper_table(connection)
@@ -345,29 +457,8 @@ def main() -> None:
             else None
         )
 
-        if fixture_date_column is None:
-            print("❌ A tabela não tem fixture_date/date.")
-            raise SystemExit(1)
-        if fixture_time_column is None:
-            print("❌ A tabela não tem fixture_time/time.")
-            raise SystemExit(1)
-
-        required = {
-            "id",
-            "status",
-            "league",
-            "home_team",
-            "away_team",
-            fixture_date_column,
-            fixture_time_column,
-            "closing_minutes_before_kickoff",
-        }
-        missing = required - columns
-        if missing:
-            print(
-                "❌ Colunas em falta: "
-                + ", ".join(sorted(missing))
-            )
+        if fixture_date_column is None or fixture_time_column is None:
+            print("❌ A tabela não tem data/hora de fixture.")
             raise SystemExit(1)
 
         now = datetime.now(APP_TIMEZONE)
@@ -378,16 +469,14 @@ def main() -> None:
             SELECT *
             FROM {table}
             WHERE COALESCE(status, 'OPEN') = 'OPEN'
-            ORDER BY
-                {fixture_date_column},
-                {fixture_time_column},
-                id
+            ORDER BY {fixture_date_column}, {fixture_time_column}, id
             """,
         )
 
         candidates: list[dict] = []
         skipped_past = 0
         skipped_far = 0
+        skipped_good_close = 0
         skipped_invalid_datetime = 0
         skipped_unsupported_league = 0
 
@@ -396,6 +485,7 @@ def main() -> None:
                 row.get(fixture_date_column),
                 row.get(fixture_time_column),
             )
+
             if fixture_datetime is None:
                 skipped_invalid_datetime += 1
                 continue
@@ -410,6 +500,10 @@ def main() -> None:
 
             if minutes_to_start > REFRESH_WINDOW_MINUTES:
                 skipped_far += 1
+                continue
+
+            if not should_query_row(row, minutes_to_start):
+                skipped_good_close += 1
                 continue
 
             canonical_league = normalize_league(row.get("league"))
@@ -433,56 +527,43 @@ def main() -> None:
             )
 
         print(f"Paper Trades OPEN         : {len(rows)}")
-        print(
-            f"Na janela 0-{REFRESH_WINDOW_MINUTES} min   : "
-            f"{len(candidates)}"
-        )
-        print(f"Kickoff já passou        : {skipped_past}")
-        print(f"Ainda longe do kickoff   : {skipped_far}")
+        print(f"Candidatos a consultar    : {len(candidates)}")
+        print(f"Kickoff já passou         : {skipped_past}")
+        print(f"Ainda longe do kickoff    : {skipped_far}")
+        print(f"CLOSE já suficientemente boa: {skipped_good_close}")
 
         if skipped_invalid_datetime:
-            print(
-                f"Data/hora inválida        : "
-                f"{skipped_invalid_datetime}"
-            )
-
+            print(f"Data/hora inválida        : {skipped_invalid_datetime}")
         if skipped_unsupported_league:
-            print(
-                f"Liga não suportada        : "
-                f"{skipped_unsupported_league}"
-            )
+            print(f"Liga não suportada        : {skipped_unsupported_league}")
 
         if not candidates:
             print()
-            print("✅ Nenhum jogo precisa de refresh agora.")
+            print("✅ Nenhum jogo precisa de pedido à API agora.")
             print("Pedidos à The Odds API: 0")
             return
 
         if not api_key:
             print()
-            print("❌ ODDS_API_KEY não configurada.")
-            raise SystemExit(1)
-
-        print()
-        print("Jogos candidatos:")
-        for item in candidates:
-            row = item["row"]
-            print(
-                f"  - {row.get('home_team')} vs "
-                f"{row.get('away_team')} "
-                f"| {item['canonical_league']} "
-                f"| {item['minutes_to_start']:.0f} min"
-            )
+            print("⚠ ODDS_API_KEY não configurada.")
+            print("CLOSE pré-jogo não pode ser capturada nesta execução.")
+            return
 
         required_sport_keys = sorted(
             {str(item["sport_key"]) for item in candidates}
         )
 
         print()
-        print(
-            f"Ligas a consultar         : "
-            f"{len(required_sport_keys)}"
-        )
+        print("Jogos candidatos:")
+        for item in candidates:
+            row = item["row"]
+            print(
+                f"  - {row.get('home_team')} vs {row.get('away_team')} "
+                f"| {item['canonical_league']} "
+                f"| {item['minutes_to_start']:.0f} min"
+            )
+
+        print(f"Ligas a consultar         : {len(required_sport_keys)}")
 
         events_by_sport: dict[str, list[dict]] = {}
         successful_sports: set[str] = set()
@@ -514,10 +595,7 @@ def main() -> None:
 
                 if is_quota_error(error):
                     quota_exhausted = True
-                    print(
-                        "⚠ Quota esgotada; "
-                        "não serão feitos mais pedidos."
-                    )
+                    print("⚠ Quota esgotada; não serão feitos mais pedidos.")
                     break
                 continue
 
@@ -525,15 +603,11 @@ def main() -> None:
 
             if not isinstance(payload, list):
                 failed_sports.append(sport_key)
-                print(
-                    f"⚠ {sport_key}: resposta inesperada."
-                )
+                print(f"⚠ {sport_key}: resposta inesperada.")
                 continue
 
             events_by_sport[sport_key] = [
-                event
-                for event in payload
-                if isinstance(event, dict)
+                event for event in payload if isinstance(event, dict)
             ]
             successful_sports.add(sport_key)
             requests_remaining = headers.get(
@@ -542,8 +616,7 @@ def main() -> None:
             )
 
             print(
-                f"✅ {sport_key}: "
-                f"{len(events_by_sport[sport_key])} eventos"
+                f"✅ {sport_key}: {len(events_by_sport[sport_key])} eventos"
             )
 
         updated = 0
@@ -552,9 +625,7 @@ def main() -> None:
         skipped_invalid_odds = 0
         skipped_not_closer = 0
 
-        observed_at = datetime.now(APP_TIMEZONE).isoformat(
-            timespec="seconds"
-        )
+        observed_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
 
         for item in candidates:
             row = item["row"]
@@ -578,6 +649,7 @@ def main() -> None:
                 row.get("home_team"),
                 row.get("away_team"),
             )
+
             if event is None:
                 skipped_not_found += 1
                 continue
@@ -588,21 +660,9 @@ def main() -> None:
                 continue
 
             new_minutes = float(item["minutes_to_start"])
-            old_minutes = row.get(
-                "closing_minutes_before_kickoff"
-            )
+            old_minutes = safe_float(row.get("closing_minutes_before_kickoff"))
 
-            old_minutes_float = None
-            if old_minutes is not None:
-                try:
-                    old_minutes_float = float(old_minutes)
-                except (TypeError, ValueError):
-                    old_minutes_float = None
-
-            if (
-                old_minutes_float is not None
-                and new_minutes >= old_minutes_float
-            ):
+            if old_minutes is not None and new_minutes >= old_minutes:
                 skipped_not_closer += 1
                 continue
 
@@ -629,12 +689,9 @@ def main() -> None:
             updated += 1
 
             print(
-                f"✅ CLOSE "
-                f"{row.get('home_team')} vs "
-                f"{row.get('away_team')} "
+                f"✅ CLOSE {row.get('home_team')} vs {row.get('away_team')} "
                 f"| {new_minutes:.0f} min "
-                f"| Over {over_close:.3f} "
-                f"| Under {under_close:.3f}"
+                f"| Over {over_close:.3f} | Under {under_close:.3f}"
             )
 
         connection.commit()
@@ -644,53 +701,26 @@ def main() -> None:
         print(" RESUMO")
         print("==========================================")
         print(f"Pedidos API usados        : {requests_used}")
-        print(
-            f"Ligas com resposta fresca : "
-            f"{len(successful_sports)}"
-        )
+        print(f"Ligas com resposta fresca : {len(successful_sports)}")
         print(f"Closing odds atualizadas  : {updated}")
-        print(
-            f"Sem fonte fresca          : "
-            f"{skipped_no_fresh_source}"
-        )
-        print(
-            f"Evento não encontrado     : "
-            f"{skipped_not_found}"
-        )
-        print(
-            f"Odd 2.5 inválida          : "
-            f"{skipped_invalid_odds}"
-        )
-        print(
-            f"Observação não mais próxima: "
-            f"{skipped_not_closer}"
-        )
+        print(f"Sem fonte fresca          : {skipped_no_fresh_source}")
+        print(f"Evento não encontrado     : {skipped_not_found}")
+        print(f"Odd 2.5 inválida          : {skipped_invalid_odds}")
+        print(f"Observação não mais próxima: {skipped_not_closer}")
 
         if requests_remaining is not None:
-            print(
-                f"Créditos API restantes    : "
-                f"{requests_remaining}"
-            )
-
+            print(f"Créditos API restantes    : {requests_remaining}")
         if quota_exhausted:
             print("Quota Odds API            : ESGOTADA")
-
         if failed_sports:
-            print(
-                f"Ligas com falha           : "
-                f"{len(failed_sports)}"
-            )
+            print(f"Ligas com falha           : {len(failed_sports)}")
 
         print()
         print("Regra de segurança:")
-        print(
-            "Só uma resposta fresca da API pode "
-            "alterar uma CLOSE."
-        )
-        print(
-            "Cada nova execução só substitui a CLOSE "
-            "se estiver mais perto do kickoff."
-        )
+        print("- OPEN nunca é alterada por este script.")
+        print("- CLOSE só vem de uma resposta fresca da API antes do kickoff.")
+        print("- Football-Data pós-jogo continua a recuperar CLOSE quando disponível.")
+        print("- A The Odds API fica reservada exclusivamente para CLOSE pré-jogo.")
 
     finally:
         connection.close()
