@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
-import json
-
-import pandas as pd
 
 from update_results_cloud import (
     canonical_team,
@@ -29,6 +30,14 @@ SOFASCORE_BASE_URLS = (
     "https://api.sofascore.com/api/v1",
 )
 
+# Só aceitamos fuzzy matching quando ambos os nomes das equipas têm
+# uma semelhança elevada. Além disso, o melhor candidato tem de ser
+# claramente melhor do que o segundo melhor. Isto evita resolver um
+# Paper Trade com o jogo errado.
+MIN_TEAM_SIMILARITY = 0.78
+MIN_COMBINED_SIMILARITY = 1.66
+MIN_WINNER_MARGIN = 0.08
+
 
 # ============================================================
 # HTTP
@@ -46,6 +55,8 @@ def fetch_json(url: str) -> object:
             "Accept": "application/json,text/plain,*/*",
             "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
             "Referer": "https://www.sofascore.com/",
+            "Origin": "https://www.sofascore.com",
+            "Cache-Control": "no-cache",
         },
     )
 
@@ -83,12 +94,12 @@ def fetch_json(url: str) -> object:
 
 
 # ============================================================
-# SOFASCORE
+# SOFASCORE — DOWNLOAD
 # ============================================================
 
 def fetch_sofascore_day(
     fixture_date: date,
-) -> tuple[list[dict], str | None]:
+) -> tuple[list[dict], str | None, str | None]:
     date_text = fixture_date.isoformat()
     errors: list[str] = []
 
@@ -119,17 +130,20 @@ def fetch_sofascore_day(
             )
             continue
 
-        return (
-            [
-                event
-                for event in events
-                if isinstance(event, dict)
-            ],
-            None,
-        )
+        clean_events = [
+            event
+            for event in events
+            if isinstance(event, dict)
+        ]
 
-    return [], " | ".join(errors)
+        return clean_events, None, base_url
 
+    return [], " | ".join(errors), None
+
+
+# ============================================================
+# SOFASCORE — EVENTOS / SCORE
+# ============================================================
 
 def sofascore_event_finished(event: dict) -> bool:
     status = event.get("status")
@@ -204,126 +218,6 @@ def sofascore_team_name(
     return None
 
 
-def canonical_sofascore_team(
-    league: str | None,
-    value: object,
-) -> str:
-    canonical = canonical_team(
-        league,
-        value,
-    )
-
-    aliases = {
-        "1 nurnberg": "nurnberg",
-        "arminia bielefeld": "bielefeld",
-        "real sociedad": "sociedad",
-        "real oviedo": "oviedo",
-        "rcd espanyol": "espanol",
-        "espanyol": "espanol",
-        "standard liege": "standard",
-        "standard de liege": "standard",
-        "oh leuven": "oud heverlee leuven",
-        "oud heverlee leuven": "oud heverlee leuven",
-        "caykur rizespor": "rizespor",
-        "goztepe sk": "goztepe",
-        "stade brestois 29": "brest",
-        "stade brestois": "brest",
-        "aj auxerre": "auxerre",
-        "angers sco": "angers",
-        "estac troyes": "troyes",
-        "sporting gijon": "sporting gijon",
-        "sporting de gijon": "sporting gijon",
-        "sp gijon": "sporting gijon",
-        "sporting cp": "sporting lisbon",
-        "sporting clube de portugal": "sporting lisbon",
-        "sp lisbon": "sporting lisbon",
-        "sporting lisbon": "sporting lisbon",
-        "paris saint germain": "psg",
-        "paris sg": "psg",
-        "psg": "psg",
-    }
-
-    return aliases.get(
-        canonical,
-        canonical,
-    )
-
-
-def sofascore_team_match(
-    league: str | None,
-    left: object,
-    right: object,
-) -> bool:
-    if team_names_match(
-        league,
-        left,
-        right,
-    ):
-        return True
-
-    a = canonical_sofascore_team(
-        league,
-        left,
-    )
-    b = canonical_sofascore_team(
-        league,
-        right,
-    )
-
-    return bool(a and b and a == b)
-
-
-def find_sofascore_event(
-    events: list[dict],
-    league: str,
-    fixture_date: date,
-    home_team: str,
-    away_team: str,
-) -> dict | None:
-    matches: list[dict] = []
-
-    for event in events:
-        if not sofascore_event_finished(event):
-            continue
-
-        event_date = sofascore_event_local_date(
-            event
-        )
-
-        if (
-            event_date is not None
-            and event_date != fixture_date
-        ):
-            continue
-
-        api_home = sofascore_team_name(
-            event,
-            "home",
-        )
-        api_away = sofascore_team_name(
-            event,
-            "away",
-        )
-
-        if not sofascore_team_match(
-            league,
-            api_home,
-            home_team,
-        ):
-            continue
-
-        if not sofascore_team_match(
-            league,
-            api_away,
-            away_team,
-        ):
-            continue
-
-        matches.append(event)
-
-    return matches[0] if len(matches) == 1 else None
-
-
 def sofascore_score(
     event: dict,
     side: str,
@@ -384,6 +278,363 @@ def sofascore_tournament_text(
                 names.append(str(value))
 
     return " / ".join(names)
+
+
+# ============================================================
+# NORMALIZAÇÃO EXTRA PARA SOFASCORE
+# ============================================================
+
+def simple_name(value: object) -> str:
+    text = "" if value is None else str(value)
+
+    text = unicodedata.normalize(
+        "NFKD",
+        text,
+    )
+    text = "".join(
+        char
+        for char in text
+        if not unicodedata.combining(char)
+    )
+    text = text.casefold()
+    text = text.replace("&", " and ")
+
+    text = re.sub(
+        r"\b(fc|cf|afc|sc|ac|sv|fk|sk|kv|rc|cd|ud|sd|ssc)\b",
+        " ",
+        text,
+    )
+    text = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        text,
+    )
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    ).strip()
+
+    # Alguns clubes alemães aparecem com um "1" inicial.
+    text = re.sub(r"^1\s+", "", text)
+
+    return text
+
+
+def canonical_sofascore_team(
+    league: str | None,
+    value: object,
+) -> str:
+    canonical = canonical_team(
+        league,
+        value,
+    )
+    canonical = simple_name(canonical)
+
+    aliases = {
+        "nurnberg": "nurnberg",
+        "1 nurnberg": "nurnberg",
+        "arminia bielefeld": "bielefeld",
+        "bielefeld": "bielefeld",
+        "real sociedad": "sociedad",
+        "sociedad": "sociedad",
+        "real oviedo": "oviedo",
+        "oviedo": "oviedo",
+        "rcd espanyol": "espanol",
+        "espanyol": "espanol",
+        "espanol": "espanol",
+        "standard liege": "standard",
+        "standard de liege": "standard",
+        "standard": "standard",
+        "oh leuven": "oud heverlee leuven",
+        "oud heverlee leuven": "oud heverlee leuven",
+        "caykur rizespor": "rizespor",
+        "rizespor": "rizespor",
+        "goztepe sk": "goztepe",
+        "goztepe": "goztepe",
+        "goztep": "goztepe",
+        "stade brestois 29": "brest",
+        "stade brestois": "brest",
+        "brest": "brest",
+        "aj auxerre": "auxerre",
+        "auxerre": "auxerre",
+        "angers sco": "angers",
+        "angers": "angers",
+        "estac troyes": "troyes",
+        "troyes": "troyes",
+        "sporting gijon": "sporting gijon",
+        "sporting de gijon": "sporting gijon",
+        "sp gijon": "sporting gijon",
+        "sporting cp": "sporting lisbon",
+        "sporting clube de portugal": "sporting lisbon",
+        "sp lisbon": "sporting lisbon",
+        "sporting lisbon": "sporting lisbon",
+        "paris saint germain": "psg",
+        "paris sg": "psg",
+        "psg": "psg",
+        "eintracht frankfurt": "ein frankfurt",
+        "ein frankfurt": "ein frankfurt",
+        "union berlin": "union berlin",
+        "mainz 05": "mainz",
+        "fsv mainz 05": "mainz",
+        "mainz": "mainz",
+        "paderborn 07": "paderborn",
+        "paderborn": "paderborn",
+        "heidenheim 1846": "heidenheim",
+        "heidenheim": "heidenheim",
+        "dynamo dresden": "dresden",
+        "dresden": "dresden",
+        "charlton athletic": "charlton",
+        "charlton": "charlton",
+        "preston north end": "preston",
+        "preston": "preston",
+        "real betis": "betis",
+        "betis": "betis",
+        "kv kortrijk": "kortrijk",
+        "kortrijk": "kortrijk",
+        "royal charleroi": "charleroi",
+        "sporting charleroi": "charleroi",
+        "charleroi": "charleroi",
+        "albacete balompie": "albacete",
+        "albacete": "albacete",
+        "pec zwolle": "zwolle",
+        "zwolle": "zwolle",
+        "nec nijmegen": "nijmegen",
+        "nijmegen": "nijmegen",
+        "atletico madrid": "ath madrid",
+        "athletic madrid": "ath madrid",
+        "ath madrid": "ath madrid",
+        "ado den haag": "den haag",
+        "den haag": "den haag",
+        "psv eindhoven": "psv eindhoven",
+        "psv": "psv eindhoven",
+    }
+
+    return aliases.get(
+        canonical,
+        canonical,
+    )
+
+
+def token_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+
+    if a == b:
+        return 1.0
+
+    if len(a) >= 4 and len(b) >= 4:
+        if a in b or b in a:
+            return 0.94
+
+    seq = SequenceMatcher(
+        None,
+        a,
+        b,
+    ).ratio()
+
+    tokens_a = set(a.split())
+    tokens_b = set(b.split())
+
+    if tokens_a and tokens_b:
+        intersection = len(
+            tokens_a & tokens_b
+        )
+        union = len(
+            tokens_a | tokens_b
+        )
+        jaccard = (
+            intersection / union
+            if union
+            else 0.0
+        )
+    else:
+        jaccard = 0.0
+
+    return max(
+        seq,
+        jaccard,
+    )
+
+
+def team_similarity(
+    league: str | None,
+    left: object,
+    right: object,
+) -> float:
+    if team_names_match(
+        league,
+        left,
+        right,
+    ):
+        return 1.0
+
+    a = canonical_sofascore_team(
+        league,
+        left,
+    )
+    b = canonical_sofascore_team(
+        league,
+        right,
+    )
+
+    return token_similarity(a, b)
+
+
+# ============================================================
+# MATCHING SEGURO
+# ============================================================
+
+def ranked_sofascore_candidates(
+    events: list[dict],
+    league: str,
+    fixture_date: date,
+    home_team: str,
+    away_team: str,
+) -> list[tuple[float, float, float, dict]]:
+    ranked: list[
+        tuple[float, float, float, dict]
+    ] = []
+
+    for event in events:
+        if not sofascore_event_finished(event):
+            continue
+
+        event_date = sofascore_event_local_date(
+            event
+        )
+
+        if (
+            event_date is not None
+            and event_date != fixture_date
+        ):
+            continue
+
+        api_home = sofascore_team_name(
+            event,
+            "home",
+        )
+        api_away = sofascore_team_name(
+            event,
+            "away",
+        )
+
+        home_similarity = team_similarity(
+            league,
+            api_home,
+            home_team,
+        )
+        away_similarity = team_similarity(
+            league,
+            api_away,
+            away_team,
+        )
+
+        combined = (
+            home_similarity
+            + away_similarity
+        )
+
+        ranked.append(
+            (
+                combined,
+                home_similarity,
+                away_similarity,
+                event,
+            )
+        )
+
+    ranked.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    return ranked
+
+
+def find_sofascore_event(
+    events: list[dict],
+    league: str,
+    fixture_date: date,
+    home_team: str,
+    away_team: str,
+) -> tuple[dict | None, str]:
+    ranked = ranked_sofascore_candidates(
+        events,
+        league,
+        fixture_date,
+        home_team,
+        away_team,
+    )
+
+    if not ranked:
+        return None, "sem jogos terminados nesse dia"
+
+    best_combined, best_home, best_away, best_event = (
+        ranked[0]
+    )
+
+    api_home = sofascore_team_name(
+        best_event,
+        "home",
+    )
+    api_away = sofascore_team_name(
+        best_event,
+        "away",
+    )
+
+    if (
+        best_home < MIN_TEAM_SIMILARITY
+        or best_away < MIN_TEAM_SIMILARITY
+        or best_combined < MIN_COMBINED_SIMILARITY
+    ):
+        return (
+            None,
+            (
+                f"melhor candidato: {api_home} vs {api_away} "
+                f"| sim={best_home:.2f}/{best_away:.2f}"
+            ),
+        )
+
+    if len(ranked) > 1:
+        second_combined = ranked[1][0]
+        if (
+            best_combined - second_combined
+            < MIN_WINNER_MARGIN
+        ):
+            return (
+                None,
+                (
+                    f"matching ambíguo: {api_home} vs {api_away} "
+                    f"| margem={best_combined - second_combined:.2f}"
+                ),
+            )
+
+    home_goals = sofascore_score(
+        best_event,
+        "home",
+    )
+    away_goals = sofascore_score(
+        best_event,
+        "away",
+    )
+
+    if (
+        home_goals is None
+        or away_goals is None
+    ):
+        return (
+            None,
+            f"jogo encontrado sem score final: {api_home} vs {api_away}",
+        )
+
+    return (
+        best_event,
+        (
+            f"match: {api_home} vs {api_away} "
+            f"| sim={best_home:.2f}/{best_away:.2f}"
+        ),
+    )
 
 
 # ============================================================
@@ -459,10 +710,10 @@ def main() -> None:
         )
 
         print(
-            f"OPEN a verificar          : {len(rows)}"
+            f"OPEN a verificar           : {len(rows)}"
         )
         print(
-            f"Janela                    : {cutoff} → {today}"
+            f"Janela                     : {cutoff} → {today}"
         )
 
         if not rows:
@@ -494,8 +745,10 @@ def main() -> None:
         print("Sofascore:")
 
         for fixture_date in dates_needed:
-            events, error = fetch_sofascore_day(
-                fixture_date
+            events, error, source_base = (
+                fetch_sofascore_day(
+                    fixture_date
+                )
             )
 
             if error is not None:
@@ -520,11 +773,14 @@ def main() -> None:
             print(
                 f"  ✅ {fixture_date}: "
                 f"{len(events)} eventos | "
-                f"{finished_count} terminados"
+                f"{finished_count} terminados | "
+                f"fonte={source_base}"
             )
 
         resolved = 0
-        unmatched: list[dict] = []
+        unmatched: list[
+            tuple[dict, str]
+        ] = []
 
         print()
         print("Resultados encontrados:")
@@ -535,7 +791,9 @@ def main() -> None:
             )
 
             if fixture_date is None:
-                unmatched.append(row)
+                unmatched.append(
+                    (row, "data inválida")
+                )
                 continue
 
             league = str(
@@ -548,7 +806,7 @@ def main() -> None:
                 row.get("away_team") or ""
             ).strip()
 
-            event = find_sofascore_event(
+            event, reason = find_sofascore_event(
                 events_by_date.get(
                     fixture_date,
                     [],
@@ -560,7 +818,9 @@ def main() -> None:
             )
 
             if event is None:
-                unmatched.append(row)
+                unmatched.append(
+                    (row, reason)
+                )
                 continue
 
             home_goals = sofascore_score(
@@ -576,7 +836,9 @@ def main() -> None:
                 home_goals is None
                 or away_goals is None
             ):
-                unmatched.append(row)
+                unmatched.append(
+                    (row, "score final inválido")
+                )
                 continue
 
             update_trade(
@@ -603,6 +865,7 @@ def main() -> None:
                     if tournament
                     else ""
                 )
+                + f" | {reason}"
             )
 
         connection.commit()
@@ -627,22 +890,28 @@ def main() -> None:
         if unmatched:
             print()
             print("Ainda por resolver no Sofascore:")
-            for row in unmatched[:30]:
+            for row, reason in unmatched[:30]:
                 print(
                     f"  - {row.get(fixture_date_column)} | "
                     f"{row.get('league')} | "
                     f"{row.get('home_team')} vs "
-                    f"{row.get('away_team')}"
+                    f"{row.get('away_team')} | "
+                    f"{reason}"
                 )
 
         print()
         print(
-            "Este fallback usa apenas jogos marcados como terminados "
-            "e exige correspondência única de equipa da casa e visitante."
+            "Matching Sofascore: primeiro tenta os nomes canónicos; "
+            "depois usa aliases e fuzzy matching conservador."
         )
         print(
-            "O endpoint usado pelo site Sofascore é não-oficial e pode "
-            "mudar; se falhar, o workflow continua para as outras fontes."
+            "Só jogos terminados são aceites e o melhor candidato "
+            "tem de ser claramente superior ao segundo."
+        )
+        print(
+            "O endpoint do Sofascore é não-oficial e pode mudar. "
+            "Se estiver indisponível, o workflow continua para "
+            "Football-Data, ESPN e The Odds API."
         )
 
     finally:
