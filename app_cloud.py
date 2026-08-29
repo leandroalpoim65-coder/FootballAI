@@ -10,9 +10,9 @@ import pandas as pd
 import streamlit as st
 
 
-# ============================================================
-# PÁGINA
-# ============================================================
+APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
+CURRENT_THRESHOLD = 0.55
+SHADOW_THRESHOLDS = [0.40, 0.45, 0.50, 0.525, 0.55]
 
 st.set_page_config(
     page_title="FootballAI Cloud",
@@ -21,609 +21,351 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
-
 st.markdown(
     """
     <style>
-        .block-container {
-            padding-top: 1rem;
-            padding-bottom: 2rem;
-            max-width: 1500px;
-        }
-
-        [data-testid="stMetric"] {
-            border: 1px solid rgba(128, 128, 128, 0.22);
-            border-radius: 14px;
-            padding: 0.8rem 1rem;
-            background: rgba(128, 128, 128, 0.045);
-        }
-
-        [data-testid="stMetricLabel"] {
-            font-weight: 650;
-        }
-
-        [data-testid="stMetricValue"] {
-            font-size: 1.65rem;
-        }
-
-        .source-card {
-            border: 1px solid rgba(128, 128, 128, 0.20);
-            border-radius: 14px;
-            padding: 0.85rem 1rem;
-            margin: 0.4rem 0 0.9rem 0;
-            background: rgba(128, 128, 128, 0.035);
-        }
-
-        @media (max-width: 700px) {
-            .block-container {
-                padding-left: 0.75rem;
-                padding-right: 0.75rem;
-                padding-top: 0.65rem;
-            }
-
-            [data-testid="stMetricValue"] {
-                font-size: 1.35rem;
-            }
-        }
+    .block-container{padding-top:.8rem;padding-bottom:2rem;max-width:1500px}
+    [data-testid="stMetric"]{border:1px solid rgba(128,128,128,.22);border-radius:14px;padding:.75rem 1rem;background:rgba(128,128,128,.04)}
+    [data-testid="stMetricLabel"]{font-weight:650}
+    [data-testid="stMetricValue"]{font-size:1.55rem}
+    @media(max-width:700px){
+      .block-container{padding-left:.65rem;padding-right:.65rem;padding-top:.55rem}
+      [data-testid="stMetricValue"]{font-size:1.25rem}
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
-# ============================================================
-# SEGREDOS / TURSO
-# ============================================================
-
 def get_setting(name: str) -> str:
     try:
         value = st.secrets[name]
     except Exception:
         value = os.getenv(name, "")
-
     return str(value).strip() if value is not None else ""
 
 
 def connect_turso():
     url = get_setting("TURSO_DATABASE_URL")
     token = get_setting("TURSO_AUTH_TOKEN")
-
     if not url:
-        raise RuntimeError(
-            "TURSO_DATABASE_URL não configurada nos Secrets do Streamlit."
-        )
-
+        raise RuntimeError("TURSO_DATABASE_URL não configurada.")
     if not token:
-        raise RuntimeError(
-            "TURSO_AUTH_TOKEN não configurado nos Secrets do Streamlit."
-        )
-
-    return libsql.connect(
-        database=url,
-        auth_token=token,
-    )
+        raise RuntimeError("TURSO_AUTH_TOKEN não configurado.")
+    return libsql.connect(database=url, auth_token=token)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def query_dataframe(
-    sql: str,
-    params: tuple = (),
-) -> pd.DataFrame:
-    connection = connect_turso()
-
+def query(sql: str, params: tuple = ()) -> pd.DataFrame:
+    conn = connect_turso()
     try:
-        cursor = connection.execute(
-            sql,
-            params,
-        )
-
-        rows = cursor.fetchall()
-        columns = [
-            item[0]
-            for item in (cursor.description or [])
-        ]
-
-        return pd.DataFrame(
-            rows,
-            columns=columns,
-        )
-
+        cur = conn.execute(sql, params)
+        rows = cur.fetchall()
+        cols = [x[0] for x in (cur.description or [])]
+        return pd.DataFrame(rows, columns=cols)
     finally:
-        connection.close()
+        conn.close()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def list_tables() -> set[str]:
-    frame = query_dataframe(
-        """
-        SELECT name
-        FROM sqlite_master
-        WHERE type = 'table'
-        """
-    )
-
-    if frame.empty or "name" not in frame.columns:
-        return set()
-
-    return set(
-        frame["name"].astype(str).tolist()
-    )
+    df = query("SELECT name FROM sqlite_master WHERE type='table'")
+    return set(df["name"].astype(str)) if "name" in df.columns else set()
 
 
-# ============================================================
-# FORMATAÇÃO
-# ============================================================
-
-def number(value, decimals: int = 0) -> str:
+def num(value, decimals: int = 0) -> str:
     if value is None or pd.isna(value):
         return "—"
-
-    return f"{float(value):,.{decimals}f}".replace(
-        ",",
-        " ",
-    )
+    return f"{float(value):,.{decimals}f}".replace(",", " ")
 
 
-def percentage(value, decimals: int = 1) -> str:
+def pct(value, decimals: int = 1) -> str:
     if value is None or pd.isna(value):
         return "—"
-
     return f"{float(value) * 100:.{decimals}f}%"
 
 
 def units(value, decimals: int = 2) -> str:
     if value is None or pd.isna(value):
         return "—"
-
     return f"{float(value):+.{decimals}f}u"
 
 
 def euros(value, unit_value: float) -> str:
     if value is None or pd.isna(value):
         return "—"
-
-    amount = float(value) * float(unit_value)
-    return f"€{amount:+,.2f}".replace(
-        ",",
-        " ",
-    )
+    return f"€{float(value) * unit_value:+,.2f}".replace(",", " ")
 
 
-def safe_numeric(
-    frame: pd.DataFrame,
-    columns: list[str],
-) -> pd.DataFrame:
-    result = frame.copy()
-
-    for column in columns:
-        if column in result.columns:
-            result[column] = pd.to_numeric(
-                result[column],
-                errors="coerce",
-            )
-
-    return result
+def to_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    out = df.copy()
+    for col in cols:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
 
 
-def clean_status(value) -> str:
+def status_text(value) -> str:
     text = str(value or "OPEN").strip().upper()
-    return text if text else "OPEN"
+    return text or "OPEN"
 
 
-def status_badge(value) -> str:
-    return (
-        "✅ RESOLVIDO"
-        if clean_status(value) == "RESOLVED"
-        else "🟡 OPEN"
-    )
-
-
-def signal_badge(value) -> str:
+def classify_close(row: pd.Series) -> str:
     try:
-        return (
-            "🟢 SINAL"
-            if int(value or 0) == 1
-            else "⚪ SEM SINAL"
-        )
-    except (TypeError, ValueError):
-        return "⚪ SEM SINAL"
-
-
-def result_badge(row: pd.Series) -> str:
-    if clean_status(row.get("status")) != "RESOLVED":
-        return "⏳"
-
-    result = row.get("result_over25")
-
-    if pd.isna(result):
-        return "—"
-
-    return "✅ OVER" if int(result) == 1 else "❌ UNDER"
-
-
-def timestamp_text(value) -> str:
-    if value is None or pd.isna(value):
-        return "—"
-
-    parsed = pd.to_datetime(
-        value,
-        errors="coerce",
-        utc=True,
-    )
-
-    if pd.isna(parsed):
-        return str(value)
-
-    try:
-        local = parsed.tz_convert(APP_TIMEZONE)
-        return local.strftime("%d/%m/%Y %H:%M")
+        if float(row.get("odd_over25_close")) <= 1:
+            return "Sem CLOSE"
     except Exception:
-        return str(value)
-
-
-# ============================================================
-# CLASSIFICAÇÃO DA CLOSE
-# ============================================================
-
-def classify_close_source(row: pd.Series) -> str:
-    close_odd = row.get("odd_over25_close")
-
-    try:
-        valid_close = float(close_odd) > 1.0
-    except (TypeError, ValueError):
-        valid_close = False
-
-    if not valid_close:
-        return "⚪ Sem CLOSE"
-
-    source = str(row.get("closing_source") or "").strip()
-    source_lower = source.casefold()
-
-    if (
-        "football-data" in source_lower
-        or "pós-jogo" in source_lower
-        or "pos-jogo" in source_lower
-    ):
-        return "🟠 Recuperada pós-jogo"
-
-    minutes = row.get("closing_minutes_before_kickoff")
-
-    try:
-        if not pd.isna(minutes) and float(minutes) >= 0:
-            return "🟢 Capturada pré-jogo"
-    except (TypeError, ValueError):
-        pass
-
-    if "odds api" in source_lower:
-        return "🟢 Capturada pré-jogo"
-
-    return "⚪ CLOSE sem origem classificada"
-
-
-def close_group(value: str) -> str:
-    text = str(value)
-
-    if text.startswith("🟢"):
-        return "Pré-jogo"
-
-    if text.startswith("🟠"):
-        return "Pós-jogo"
-
-    if "Sem CLOSE" in text:
         return "Sem CLOSE"
 
+    source = str(row.get("closing_source") or "").casefold()
+    if "football-data" in source or "pós-jogo" in source or "pos-jogo" in source:
+        return "Pós-jogo"
+
+    try:
+        minutes = float(row.get("closing_minutes_before_kickoff"))
+        if minutes >= 0:
+            return "Pré-jogo"
+    except Exception:
+        pass
+
+    if "odds api" in source:
+        return "Pré-jogo"
     return "Outra"
 
 
-# ============================================================
-# PREPARAÇÃO DOS DADOS
-# ============================================================
+def close_badge(group: str) -> str:
+    return {
+        "Pré-jogo": "🟢 Pré-jogo",
+        "Pós-jogo": "🟠 Pós-jogo",
+        "Sem CLOSE": "⚪ Sem CLOSE",
+    }.get(group, "⚪ Outra")
 
-def prepare_paper(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty:
-        return frame
 
-    result = safe_numeric(
-        frame,
+def prepare_paper(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    out = to_numeric(
+        df,
         [
             "odd_over25_open",
             "odd_under25_open",
             "odd_over25_close",
             "odd_under25_close",
-            "fair_probability_open",
             "clv_probability",
-            "training_base_rate",
-            "signal_threshold",
-            "edge_over_base_rate",
+            "fair_probability_open",
             "signal",
             "planned_stake",
-            "result_over25",
-            "clv",
             "profit",
+            "result_over25",
             "home_goals",
             "away_goals",
             "closing_minutes_before_kickoff",
         ],
     )
 
-    if "fixture_date" in result.columns:
-        result["fixture_date_dt"] = pd.to_datetime(
-            result["fixture_date"],
-            errors="coerce",
-        )
-
-    if "status" in result.columns:
-        result["status"] = result["status"].apply(
-            clean_status
-        )
-
-    valid_close = (
-        result.get(
-            "odd_over25_open",
-            pd.Series(np.nan, index=result.index),
-        ).gt(1.0)
-        & result.get(
-            "odd_over25_close",
-            pd.Series(np.nan, index=result.index),
-        ).gt(1.0)
+    out["status"] = (
+        out["status"].apply(status_text)
+        if "status" in out.columns
+        else "OPEN"
     )
-
-    result["clv_display"] = np.nan
-    result.loc[
-        valid_close,
-        "clv_display",
-    ] = (
-        result.loc[valid_close, "odd_over25_open"]
-        / result.loc[valid_close, "odd_over25_close"]
-        - 1.0
+    out["signal"] = out.get("signal", 0)
+    out["clv_probability"] = out.get("clv_probability", np.nan)
+    out["closing_source"] = out.get("closing_source", None)
+    out["closing_minutes_before_kickoff"] = out.get(
+        "closing_minutes_before_kickoff", np.nan
     )
-
-    result["close_type"] = result.apply(
-        classify_close_source,
-        axis=1,
-    )
-
-    result["close_group"] = result[
-        "close_type"
-    ].apply(close_group)
-
-    return result
-
-
-def prepare_upcoming(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty:
-        return frame
-
-    result = safe_numeric(
-        frame,
-        [
-            "odd_over25_open",
-            "odd_under25_open",
-            "odd_over25_current",
-            "odd_under25_current",
-            "active",
-        ],
-    )
-
-    date_text = result.get(
-        "date",
-        pd.Series("", index=result.index),
-    ).astype(str)
-
-    time_text = result.get(
-        "time",
-        pd.Series("00:00", index=result.index),
-    ).fillna("00:00").astype(str)
-
-    result["fixture_datetime"] = pd.to_datetime(
-        date_text + " " + time_text,
+    out["fixture_date_dt"] = pd.to_datetime(
+        out.get("fixture_date", pd.Series("", index=out.index)),
         errors="coerce",
     )
 
-    now_naive = pd.Timestamp.now(
-        tz=APP_TIMEZONE
-    ).tz_localize(None)
-
-    result["minutes_to_kickoff"] = (
-        result["fixture_datetime"]
-        - now_naive
-    ).dt.total_seconds() / 60.0
-
-    return result
-
-
-# ============================================================
-# TABELAS AMIGÁVEIS
-# ============================================================
-
-def paper_display(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty:
-        return frame
-
-    display = pd.DataFrame(index=frame.index)
-
-    display["Decisão"] = frame.get(
-        "signal",
-        pd.Series(0, index=frame.index),
-    ).apply(signal_badge)
-
-    display["Estado"] = frame.get(
-        "status",
-        pd.Series("OPEN", index=frame.index),
-    ).apply(status_badge)
-
-    display["Data"] = frame.get(
-        "fixture_date",
-        pd.Series("", index=frame.index),
+    valid = (
+        out.get("odd_over25_open", pd.Series(np.nan, index=out.index)).gt(1)
+        & out.get("odd_over25_close", pd.Series(np.nan, index=out.index)).gt(1)
     )
-
-    display["Hora"] = frame.get(
-        "fixture_time",
-        pd.Series("", index=frame.index),
+    out["clv_display"] = np.nan
+    out.loc[valid, "clv_display"] = (
+        out.loc[valid, "odd_over25_open"]
+        / out.loc[valid, "odd_over25_close"]
+        - 1
     )
+    out["close_group"] = out.apply(classify_close, axis=1)
+    out["close_badge"] = out["close_group"].apply(close_badge)
+    return out
 
-    display["Liga"] = frame.get(
-        "league",
-        pd.Series("", index=frame.index),
+
+def prepare_upcoming(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    out = to_numeric(
+        df,
+        [
+            "odd_over25_open",
+            "odd_over25_current",
+            "active",
+        ],
     )
+    dates = out.get("date", pd.Series("", index=out.index)).astype(str)
+    times = out.get(
+        "time", pd.Series("00:00", index=out.index)
+    ).fillna("00:00").astype(str)
 
-    display["Jogo"] = (
-        frame.get(
-            "home_team",
-            pd.Series("", index=frame.index),
-        ).astype(str)
+    out["fixture_datetime"] = pd.to_datetime(
+        dates + " " + times,
+        errors="coerce",
+    )
+    now = pd.Timestamp.now(tz=APP_TIMEZONE).tz_localize(None)
+    out["minutes_to_kickoff"] = (
+        out["fixture_datetime"] - now
+    ).dt.total_seconds() / 60
+    return out
+
+
+def result_badge(row: pd.Series) -> str:
+    if row.get("status") != "RESOLVED":
+        return "⏳"
+    value = row.get("result_over25")
+    if pd.isna(value):
+        return "—"
+    return "✅ OVER" if int(value) == 1 else "❌ UNDER"
+
+
+def paper_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    out = pd.DataFrame(index=df.index)
+    out["Decisão"] = df["signal"].apply(
+        lambda x: "🟢 SINAL" if int(x or 0) == 1 else "⚪ SEM SINAL"
+    )
+    out["Estado"] = df["status"].map(
+        {"RESOLVED": "✅ RESOLVIDO", "OPEN": "🟡 OPEN"}
+    ).fillna(df["status"])
+    out["Data"] = df.get("fixture_date", "")
+    out["Hora"] = df.get("fixture_time", "")
+    out["Liga"] = df.get("league", "")
+    out["Jogo"] = (
+        df.get("home_team", "").astype(str)
         + " vs "
-        + frame.get(
-            "away_team",
-            pd.Series("", index=frame.index),
-        ).astype(str)
+        + df.get("away_team", "").astype(str)
     )
-
-    display["OPEN Over"] = frame.get(
-        "odd_over25_open",
-        pd.Series(np.nan, index=frame.index),
-    ).round(3)
-
-    display["CLOSE Over"] = frame.get(
-        "odd_over25_close",
-        pd.Series(np.nan, index=frame.index),
-    ).round(3)
-
-    display["Tipo CLOSE"] = frame.get(
-        "close_type",
-        pd.Series("⚪ Sem CLOSE", index=frame.index),
-    )
-
-    if "clv_probability" in frame.columns:
-        display["Prob. CLV+ %"] = (
-            frame["clv_probability"] * 100
-        ).round(1)
-
-    if "clv_display" in frame.columns:
-        display["CLV %"] = (
-            frame["clv_display"] * 100
-        ).round(2)
-
-    display["Resultado"] = frame.apply(
-        result_badge,
-        axis=1,
-    )
-
-    if "profit" in frame.columns:
-        display["Lucro (u)"] = frame[
-            "profit"
-        ].round(3)
-
-    return display.reset_index(drop=True)
+    out["OPEN"] = df.get("odd_over25_open", np.nan).round(3)
+    out["CLOSE"] = df.get("odd_over25_close", np.nan).round(3)
+    out["Tipo CLOSE"] = df["close_badge"]
+    out["Prob. CLV+ %"] = (df["clv_probability"] * 100).round(1)
+    out["CLV %"] = (df["clv_display"] * 100).round(2)
+    out["Resultado"] = df.apply(result_badge, axis=1)
+    if "profit" in df.columns:
+        out["Lucro (u)"] = df["profit"].round(3)
+    return out.reset_index(drop=True)
 
 
-def upcoming_display(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty:
-        return frame
+def upcoming_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
 
-    display = pd.DataFrame(index=frame.index)
-
-    display["Data"] = frame.get(
-        "date",
-        pd.Series("", index=frame.index),
-    )
-    display["Hora"] = frame.get(
-        "time",
-        pd.Series("", index=frame.index),
-    )
-    display["Liga"] = frame.get(
-        "league",
-        pd.Series("", index=frame.index),
-    )
-    display["Jogo"] = (
-        frame.get(
-            "home_team",
-            pd.Series("", index=frame.index),
-        ).astype(str)
+    out = pd.DataFrame(index=df.index)
+    out["Data"] = df.get("date", "")
+    out["Hora"] = df.get("time", "")
+    out["Liga"] = df.get("league", "")
+    out["Jogo"] = (
+        df.get("home_team", "").astype(str)
         + " vs "
-        + frame.get(
-            "away_team",
-            pd.Series("", index=frame.index),
-        ).astype(str)
+        + df.get("away_team", "").astype(str)
     )
-    display["OPEN Over"] = frame.get(
-        "odd_over25_open",
-        pd.Series(np.nan, index=frame.index),
-    ).round(3)
-    display["Atual Over"] = frame.get(
-        "odd_over25_current",
-        pd.Series(np.nan, index=frame.index),
-    ).round(3)
-    display["Faltam"] = frame.get(
-        "minutes_to_kickoff",
-        pd.Series(np.nan, index=frame.index),
-    ).apply(
-        lambda value: (
-            "—"
-            if pd.isna(value)
-            else (
-                f"{int(value // 60)}h {int(value % 60)}m"
-                if value >= 60
-                else f"{max(0, int(value))} min"
-            )
+    out["OPEN"] = df.get("odd_over25_open", np.nan).round(3)
+    out["Atual"] = df.get("odd_over25_current", np.nan).round(3)
+
+    def countdown(value):
+        if pd.isna(value):
+            return "—"
+        if value >= 60:
+            return f"{int(value // 60)}h {int(value % 60)}m"
+        return f"{max(0, int(value))} min"
+
+    out["Faltam"] = df["minutes_to_kickoff"].apply(countdown)
+    return out.reset_index(drop=True)
+
+
+def threshold_test(close_rows: pd.DataFrame) -> pd.DataFrame:
+    usable = close_rows[
+        close_rows["clv_probability"].notna()
+        & close_rows["clv_display"].notna()
+    ].copy()
+
+    rows = []
+    for threshold in SHADOW_THRESHOLDS:
+        picked = usable[usable["clv_probability"] >= threshold]
+        n = len(picked)
+        rows.append(
+            {
+                "threshold": threshold,
+                "Threshold": (
+                    f"{threshold * 100:.1f}%"
+                    if threshold == 0.525
+                    else f"{threshold * 100:.0f}%"
+                ),
+                "Tipo": "ATUAL" if np.isclose(threshold, CURRENT_THRESHOLD) else "SHADOW",
+                "Jogos": n,
+                "Cobertura %": round(100 * n / len(usable), 1) if len(usable) else np.nan,
+                "CLV positivo %": round(
+                    100 * (picked["clv_display"] > 0).mean(), 1
+                ) if n else np.nan,
+                "CLV médio %": round(
+                    100 * picked["clv_display"].mean(), 2
+                ) if n else np.nan,
+                "CLV mediano %": round(
+                    100 * picked["clv_display"].median(), 2
+                ) if n else np.nan,
+                "Prob. média %": round(
+                    100 * picked["clv_probability"].mean(), 1
+                ) if n else np.nan,
+            }
         )
-    )
+    return pd.DataFrame(rows)
 
-    return display.reset_index(drop=True)
-
-
-# ============================================================
-# CARREGAR BASE CLOUD
-# ============================================================
 
 try:
     tables = list_tables()
-except Exception as error:
-    st.error("Não foi possível ligar à base Turso.")
-    st.code(str(error))
-    st.info(
-        "No Streamlit Community Cloud adiciona TURSO_DATABASE_URL "
-        "e TURSO_AUTH_TOKEN em App settings → Secrets."
-    )
+except Exception as exc:
+    st.error("Não foi possível ligar à Turso.")
+    st.code(str(exc))
     st.stop()
 
-if "paper_trades" in tables:
-    paper = prepare_paper(
-        query_dataframe(
+paper = (
+    prepare_paper(
+        query(
             """
             SELECT *
             FROM paper_trades
-            ORDER BY
-                fixture_date DESC,
-                fixture_time DESC,
-                id DESC
+            ORDER BY fixture_date DESC, fixture_time DESC, id DESC
             """
         )
     )
-else:
-    paper = pd.DataFrame()
+    if "paper_trades" in tables
+    else pd.DataFrame()
+)
 
-if "upcoming_matches" in tables:
-    upcoming = prepare_upcoming(
-        query_dataframe(
+upcoming = (
+    prepare_upcoming(
+        query(
             """
             SELECT *
             FROM upcoming_matches
             WHERE active = 1
-            ORDER BY
-                date,
-                time,
-                league,
-                home_team
+            ORDER BY date, time, league, home_team
             """
         )
     )
-else:
-    upcoming = pd.DataFrame()
+    if "upcoming_matches" in tables
+    else pd.DataFrame()
+)
 
-if "matches" in tables:
-    history_summary = query_dataframe(
+history = (
+    query(
         """
         SELECT
             COUNT(*) AS total_matches,
@@ -632,17 +374,13 @@ if "matches" in tables:
         FROM matches
         """
     )
-else:
-    history_summary = pd.DataFrame()
+    if "matches" in tables
+    else pd.DataFrame()
+)
 
-
-# ============================================================
-# SIDEBAR
-# ============================================================
 
 st.sidebar.title("⚽ FootballAI")
 st.sidebar.caption("Cloud dashboard")
-
 page = st.sidebar.radio(
     "Navegação",
     [
@@ -657,7 +395,6 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-
 unit_value = st.sidebar.number_input(
     "Valor por unidade (€)",
     min_value=1.0,
@@ -666,62 +403,34 @@ unit_value = st.sidebar.number_input(
     step=1.0,
 )
 
-league_options = []
-
-if not paper.empty and "league" in paper.columns:
-    league_options = sorted(
-        paper["league"]
-        .dropna()
-        .astype(str)
-        .unique()
-        .tolist()
-    )
-
+leagues = (
+    sorted(paper["league"].dropna().astype(str).unique())
+    if not paper.empty and "league" in paper.columns
+    else []
+)
 selected_leagues = st.sidebar.multiselect(
     "Filtrar ligas",
-    options=league_options,
+    options=leagues,
     default=[],
     placeholder="Todas as ligas",
 )
 
-if st.sidebar.button(
-    "🔄 Atualizar dados",
-    use_container_width=True,
-):
+if st.sidebar.button("🔄 Atualizar dados", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
-st.sidebar.caption(
-    "Dados em cache durante 60 segundos."
-)
+st.sidebar.caption("Cache: 60 segundos.")
 
-
-# ============================================================
-# FILTRO GLOBAL
-# ============================================================
-
-paper_filtered = paper.copy()
-upcoming_filtered = upcoming.copy()
-
+paper_view = paper.copy()
+upcoming_view = upcoming.copy()
 if selected_leagues:
-    if not paper_filtered.empty:
-        paper_filtered = paper_filtered[
-            paper_filtered["league"].isin(
-                selected_leagues
-            )
-        ].copy()
+    if not paper_view.empty:
+        paper_view = paper_view[paper_view["league"].isin(selected_leagues)]
+    if not upcoming_view.empty:
+        upcoming_view = upcoming_view[
+            upcoming_view["league"].isin(selected_leagues)
+        ]
 
-    if not upcoming_filtered.empty:
-        upcoming_filtered = upcoming_filtered[
-            upcoming_filtered["league"].isin(
-                selected_leagues
-            )
-        ].copy()
-
-
-# ============================================================
-# CABEÇALHO
-# ============================================================
 
 st.title("⚽ FootballAI Cloud")
 st.caption(
@@ -729,868 +438,374 @@ st.caption(
 )
 
 
-# ============================================================
-# RESUMO
-# ============================================================
-
 if page == "🏠 Resumo":
-    if paper_filtered.empty:
-        st.warning(
-            "Ainda não existem Paper Trades para apresentar."
-        )
+    if paper_view.empty:
+        st.info("Ainda não existem Paper Trades.")
     else:
-        total_trades = len(paper_filtered)
-        total_signals = int(
-            pd.to_numeric(
-                paper_filtered.get(
-                    "signal",
-                    pd.Series(0, index=paper_filtered.index),
-                ),
-                errors="coerce",
-            ).fillna(0).sum()
-        )
+        signals = paper_view[paper_view["signal"] == 1]
+        resolved_signals = signals[signals["status"] == "RESOLVED"]
 
-        open_count = int(
-            (paper_filtered["status"] == "OPEN").sum()
-        )
-        resolved_count = int(
-            (paper_filtered["status"] == "RESOLVED").sum()
-        )
-        pregame_count = int(
-            (paper_filtered["close_group"] == "Pré-jogo").sum()
-        )
-        recovered_count = int(
-            (paper_filtered["close_group"] == "Pós-jogo").sum()
-        )
-
-        signal_resolved = paper_filtered[
-            (paper_filtered["signal"] == 1)
-            & (paper_filtered["status"] == "RESOLVED")
-        ].copy()
-
-        signal_profit = pd.to_numeric(
-            signal_resolved.get(
-                "profit",
-                pd.Series(dtype=float),
-            ),
+        profit = pd.to_numeric(
+            resolved_signals.get("profit", pd.Series(dtype=float)),
+            errors="coerce",
+        ).fillna(0).sum()
+        stake = pd.to_numeric(
+            resolved_signals.get("planned_stake", pd.Series(dtype=float)),
             errors="coerce",
         ).fillna(0).sum()
 
-        signal_stake = pd.to_numeric(
-            signal_resolved.get(
-                "planned_stake",
-                pd.Series(dtype=float),
-            ),
-            errors="coerce",
-        ).fillna(0).sum()
+        r1 = st.columns(4)
+        r1[0].metric("Paper Trades", len(paper_view))
+        r1[1].metric("Sinais", len(signals))
+        r1[2].metric("OPEN", int((paper_view["status"] == "OPEN").sum()))
+        r1[3].metric("Resolvidos", int((paper_view["status"] == "RESOLVED").sum()))
 
-        signal_roi = (
-            signal_profit / signal_stake
-            if signal_stake > 0
-            else np.nan
-        )
-
-        metric_row_1 = st.columns(4)
-        metric_row_1[0].metric(
-            "Paper Trades",
-            number(total_trades),
-        )
-        metric_row_1[1].metric(
-            "Sinais",
-            number(total_signals),
-        )
-        metric_row_1[2].metric(
-            "OPEN",
-            number(open_count),
-        )
-        metric_row_1[3].metric(
-            "Resolvidos",
-            number(resolved_count),
-        )
-
-        metric_row_2 = st.columns(4)
-        metric_row_2[0].metric(
+        r2 = st.columns(4)
+        r2[0].metric(
             "🟢 CLOSE pré-jogo",
-            number(pregame_count),
+            int((paper_view["close_group"] == "Pré-jogo").sum()),
         )
-        metric_row_2[1].metric(
+        r2[1].metric(
             "🟠 CLOSE pós-jogo",
-            number(recovered_count),
+            int((paper_view["close_group"] == "Pós-jogo").sum()),
         )
-        metric_row_2[2].metric(
-            "Lucro dos sinais",
-            units(signal_profit),
-            euros(signal_profit, unit_value),
-        )
-        metric_row_2[3].metric(
-            "ROI dos sinais",
-            percentage(signal_roi),
-        )
+        r2[2].metric("Lucro sinais", units(profit), euros(profit, unit_value))
+        r2[3].metric("ROI sinais", pct(profit / stake if stake > 0 else np.nan))
 
         st.subheader("🎯 Sinais mais recentes")
-
-        signals = paper_filtered[
-            paper_filtered["signal"] == 1
-        ].head(8)
-
-        if signals.empty:
-            st.info("Ainda não existem sinais registados.")
-        else:
-            st.dataframe(
-                paper_display(signals),
-                use_container_width=True,
-                hide_index=True,
-            )
+        st.dataframe(
+            paper_table(signals.head(8)),
+            use_container_width=True,
+            hide_index=True,
+        )
 
         st.subheader("📅 Próximos jogos")
-
-        future = upcoming_filtered[
-            upcoming_filtered.get(
+        future = upcoming_view[
+            upcoming_view.get(
                 "minutes_to_kickoff",
-                pd.Series(np.nan, index=upcoming_filtered.index),
+                pd.Series(np.nan, index=upcoming_view.index),
             ) >= 0
         ].head(10)
+        st.dataframe(
+            upcoming_table(future),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-        if future.empty:
-            st.info(
-                "Sem próximos jogos ativos neste momento."
-            )
-        else:
-            st.dataframe(
-                upcoming_display(future),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-
-# ============================================================
-# SINAIS
-# ============================================================
 
 elif page == "🎯 Sinais":
-    st.subheader("🎯 Sinais do modelo")
+    st.subheader("🎯 Sinais reais do modelo")
     st.caption(
-        "Aqui aparecem apenas as entradas autorizadas pelo limiar congelado do modelo CLV."
+        "Apenas sinais autorizados pelo threshold real congelado do modelo."
+    )
+    signals = paper_view[paper_view["signal"] == 1].copy()
+
+    mode = st.segmented_control(
+        "Estado",
+        ["Todos", "OPEN", "RESOLVED"],
+        default="Todos",
+    )
+    if mode in {"OPEN", "RESOLVED"}:
+        signals = signals[signals["status"] == mode]
+
+    st.dataframe(
+        paper_table(signals),
+        use_container_width=True,
+        hide_index=True,
     )
 
-    if paper_filtered.empty:
-        st.info("Sem Paper Trades.")
-    else:
-        signals = paper_filtered[
-            paper_filtered["signal"] == 1
-        ].copy()
-
-        status_filter = st.segmented_control(
-            "Estado",
-            options=["Todos", "OPEN", "RESOLVED"],
-            default="Todos",
-        )
-
-        if status_filter in {"OPEN", "RESOLVED"}:
-            signals = signals[
-                signals["status"] == status_filter
-            ].copy()
-
-        if signals.empty:
-            st.info(
-                "Nenhum sinal corresponde aos filtros atuais."
-            )
-        else:
-            st.dataframe(
-                paper_display(signals),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            st.download_button(
-                "⬇️ Exportar sinais CSV",
-                data=signals.to_csv(
-                    index=False
-                ).encode("utf-8-sig"),
-                file_name="footballai_signals_cloud.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
-
-# ============================================================
-# PAPER TRADES
-# ============================================================
 
 elif page == "🧾 Paper Trades":
-    st.subheader("🧾 Todos os Paper Trades")
+    st.subheader("🧾 Paper Trades")
 
-    if paper_filtered.empty:
-        st.info("Sem Paper Trades.")
-    else:
-        filter_columns = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
+    statuses = c1.multiselect(
+        "Estado",
+        ["OPEN", "RESOLVED"],
+        default=[],
+        placeholder="Todos",
+    )
+    only_signals = c2.toggle("Só sinais")
+    close_mode = c3.selectbox(
+        "Tipo CLOSE",
+        ["Todas", "Pré-jogo", "Pós-jogo", "Sem CLOSE"],
+    )
+    sort_mode = c4.selectbox(
+        "Ordenar",
+        ["Mais recentes", "Maior prob. CLV+", "Maior CLV"],
+    )
 
-        status_values = filter_columns[0].multiselect(
-            "Estado",
-            options=["OPEN", "RESOLVED"],
-            default=[],
-            placeholder="Todos",
-        )
+    shown = paper_view.copy()
+    if statuses:
+        shown = shown[shown["status"].isin(statuses)]
+    if only_signals:
+        shown = shown[shown["signal"] == 1]
+    if close_mode != "Todas":
+        shown = shown[shown["close_group"] == close_mode]
 
-        only_signals = filter_columns[1].toggle(
-            "Só sinais",
-            value=False,
-        )
+    if sort_mode == "Maior prob. CLV+":
+        shown = shown.sort_values("clv_probability", ascending=False)
+    elif sort_mode == "Maior CLV":
+        shown = shown.sort_values("clv_display", ascending=False)
 
-        close_filter = filter_columns[2].selectbox(
-            "Tipo de CLOSE",
-            [
-                "Todas",
-                "Pré-jogo",
-                "Pós-jogo",
-                "Sem CLOSE",
-            ],
-        )
+    st.caption(f"{len(shown)} registos.")
+    st.dataframe(
+        paper_table(shown),
+        use_container_width=True,
+        hide_index=True,
+    )
 
-        sort_mode = filter_columns[3].selectbox(
-            "Ordenar por",
-            [
-                "Mais recentes",
-                "Maior prob. CLV+",
-                "Maior CLV observado",
-            ],
-        )
-
-        displayed = paper_filtered.copy()
-
-        if status_values:
-            displayed = displayed[
-                displayed["status"].isin(status_values)
-            ].copy()
-
-        if only_signals:
-            displayed = displayed[
-                displayed["signal"] == 1
-            ].copy()
-
-        if close_filter != "Todas":
-            displayed = displayed[
-                displayed["close_group"] == close_filter
-            ].copy()
-
-        if sort_mode == "Maior prob. CLV+":
-            displayed = displayed.sort_values(
-                "clv_probability",
-                ascending=False,
-                na_position="last",
-            )
-        elif sort_mode == "Maior CLV observado":
-            displayed = displayed.sort_values(
-                "clv_display",
-                ascending=False,
-                na_position="last",
-            )
-        else:
-            displayed = displayed.sort_values(
-                [
-                    "fixture_date_dt",
-                    "fixture_time",
-                    "id",
-                ],
-                ascending=False,
-                na_position="last",
-            )
-
-        st.caption(
-            f"{len(displayed)} registos mostrados."
-        )
-
-        st.dataframe(
-            paper_display(displayed),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.download_button(
-            "⬇️ Exportar Paper Trades CSV",
-            data=displayed.to_csv(
-                index=False
-            ).encode("utf-8-sig"),
-            file_name="footballai_paper_trades_cloud.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-
-# ============================================================
-# UPCOMING
-# ============================================================
 
 elif page == "📅 Próximos Jogos":
-    st.subheader("📅 Próximos jogos e odds")
-    st.caption(
-        "OPEN é a primeira odd observada; Atual é a última observação segura do downloader cloud."
+    st.subheader("📅 Próximos jogos")
+    future = upcoming_view[
+        upcoming_view.get(
+            "minutes_to_kickoff",
+            pd.Series(np.nan, index=upcoming_view.index),
+        ) >= 0
+    ].copy()
+
+    horizon = st.selectbox(
+        "Horizonte",
+        ["Todos", "24 horas", "3 dias", "7 dias"],
+    )
+    limits = {
+        "24 horas": 24 * 60,
+        "3 dias": 3 * 24 * 60,
+        "7 dias": 7 * 24 * 60,
+    }
+    if horizon in limits:
+        future = future[future["minutes_to_kickoff"] <= limits[horizon]]
+
+    st.dataframe(
+        upcoming_table(future),
+        use_container_width=True,
+        hide_index=True,
     )
 
-    if upcoming_filtered.empty:
-        st.info(
-            "Não existem jogos ativos na tabela upcoming_matches."
-        )
-    else:
-        future = upcoming_filtered[
-            upcoming_filtered.get(
-                "minutes_to_kickoff",
-                pd.Series(np.nan, index=upcoming_filtered.index),
-            ) >= 0
-        ].copy()
-
-        horizon = st.selectbox(
-            "Horizonte",
-            [
-                "Todos",
-                "Próximas 24 horas",
-                "Próximos 3 dias",
-                "Próximos 7 dias",
-            ],
-        )
-
-        horizon_minutes = {
-            "Próximas 24 horas": 24 * 60,
-            "Próximos 3 dias": 3 * 24 * 60,
-            "Próximos 7 dias": 7 * 24 * 60,
-        }.get(horizon)
-
-        if horizon_minutes is not None:
-            future = future[
-                future["minutes_to_kickoff"]
-                <= horizon_minutes
-            ].copy()
-
-        if future.empty:
-            st.info(
-                "Nenhum jogo dentro do horizonte escolhido."
-            )
-        else:
-            st.dataframe(
-                upcoming_display(future),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-
-# ============================================================
-# CLV / PERFORMANCE
-# ============================================================
 
 elif page == "📈 CLV & Performance":
-    st.subheader("📈 CLV e performance")
-
+    st.subheader("📈 CLV & Performance")
     st.info(
-        "A clv_probability estima a probabilidade de obter CLV positivo. "
-        "Não é a probabilidade de o jogo terminar Over 2.5."
+        "clv_probability = probabilidade prevista de obter CLV positivo; "
+        "não é a probabilidade de Over 2.5."
     )
 
-    if paper_filtered.empty:
-        st.info("Sem dados suficientes.")
+    all_close = paper_view[paper_view["clv_display"].notna()].copy()
+    pre = all_close[all_close["close_group"] == "Pré-jogo"].copy()
+    post = all_close[all_close["close_group"] == "Pós-jogo"].copy()
+
+    m = st.columns(3)
+    m[0].metric("CLOSE válidas", len(all_close))
+    m[1].metric("🟢 Pré-jogo", len(pre))
+    m[2].metric("🟠 Pós-jogo", len(post))
+
+    quality = st.segmented_control(
+        "Qualidade da CLOSE",
+        ["Todas", "🟢 Pré-jogo", "🟠 Pós-jogo"],
+        default="Todas",
+    )
+    if quality == "🟢 Pré-jogo":
+        close_rows = pre
+        st.success("Amostra preferida para decisões sobre o modelo.")
+    elif quality == "🟠 Pós-jogo":
+        close_rows = post
+        st.warning(
+            "CLOSE recuperada no Football-Data; útil, mas pode não ter "
+            "a mesma agregação de casas da OPEN."
+        )
     else:
-        all_close_rows = paper_filtered[
-            paper_filtered["clv_display"].notna()
-        ].copy()
-
-        pregame_rows = all_close_rows[
-            all_close_rows["close_group"] == "Pré-jogo"
-        ].copy()
-
-        recovered_rows = all_close_rows[
-            all_close_rows["close_group"] == "Pós-jogo"
-        ].copy()
-
-        coverage_metrics = st.columns(3)
-        coverage_metrics[0].metric(
-            "CLOSE válidas",
-            number(len(all_close_rows)),
-        )
-        coverage_metrics[1].metric(
-            "🟢 Pré-jogo",
-            number(len(pregame_rows)),
-        )
-        coverage_metrics[2].metric(
-            "🟠 Recuperadas pós-jogo",
-            number(len(recovered_rows)),
-        )
-
-        st.markdown("#### Qualidade da amostra CLV")
-
-        close_mode = st.segmented_control(
-            "Analisar",
-            options=[
-                "Todas",
-                "🟢 Pré-jogo",
-                "🟠 Pós-jogo",
-            ],
-            default="Todas",
-        )
-
-        if close_mode == "🟢 Pré-jogo":
-            close_rows = pregame_rows.copy()
-            st.success(
-                "Amostra de maior qualidade: closing odds capturadas antes do kickoff."
-            )
-        elif close_mode == "🟠 Pós-jogo":
-            close_rows = recovered_rows.copy()
+        close_rows = all_close
+        if len(post):
             st.warning(
-                "Estas CLOSE foram recuperadas posteriormente no Football-Data. "
-                "São úteis para análise, mas podem usar uma agregação de casas diferente da OPEN."
+                "Esta vista mistura CLOSE pré-jogo e pós-jogo. "
+                "Dá mais peso à amostra pré-jogo."
             )
-        else:
-            close_rows = all_close_rows.copy()
-            if not recovered_rows.empty:
-                st.warning(
-                    "A vista 'Todas' mistura CLOSE pré-jogo com CLOSE recuperadas pós-jogo. "
-                    "Para decisões sobre o modelo, dá mais peso à amostra pré-jogo."
-                )
 
-        close_metrics = st.columns(4)
-        close_metrics[0].metric(
-            "Jogos analisados",
-            number(len(close_rows)),
-        )
-        close_metrics[1].metric(
-            "CLV médio",
-            percentage(
-                close_rows["clv_display"].mean()
-                if not close_rows.empty
-                else np.nan
-            ),
-        )
-        close_metrics[2].metric(
-            "CLV positivo",
-            percentage(
-                (close_rows["clv_display"] > 0).mean()
-                if not close_rows.empty
-                else np.nan
-            ),
-        )
-        close_metrics[3].metric(
-            "CLV mediano",
-            percentage(
-                close_rows["clv_display"].median()
-                if not close_rows.empty
-                else np.nan
-            ),
+    cm = st.columns(4)
+    cm[0].metric("Jogos", len(close_rows))
+    cm[1].metric(
+        "CLV médio",
+        pct(close_rows["clv_display"].mean() if len(close_rows) else np.nan),
+    )
+    cm[2].metric(
+        "CLV positivo",
+        pct((close_rows["clv_display"] > 0).mean() if len(close_rows) else np.nan),
+    )
+    cm[3].metric(
+        "CLV mediano",
+        pct(close_rows["clv_display"].median() if len(close_rows) else np.nan),
+    )
+
+    if len(close_rows) < 50:
+        st.warning(
+            "A amostra selecionada ainda é pequena para alterar o threshold real."
         )
 
-        if len(close_rows) < 50:
-            st.warning(
-                "A amostra selecionada ainda é pequena. "
-                "Evita alterar o limiar do modelo apenas com base nestes jogos."
+    if len(close_rows):
+        bins = [-0.001, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 1.001]
+        labels = [
+            "<30%",
+            "30–35%",
+            "35–40%",
+            "40–45%",
+            "45–50%",
+            "50–55%",
+            "55%+",
+        ]
+
+        cal = close_rows.copy()
+        cal["Faixa"] = pd.cut(
+            cal["clv_probability"],
+            bins=bins,
+            labels=labels,
+            include_lowest=True,
+        )
+        cal["CLV positivo"] = (cal["clv_display"] > 0).astype(int)
+
+        cal_table = (
+            cal.dropna(subset=["Faixa"])
+            .groupby("Faixa", observed=False)
+            .agg(
+                Jogos=("id", "count"),
+                Prob=("clv_probability", "mean"),
+                Pos=("CLV positivo", "mean"),
+                CLV=("clv_display", "mean"),
             )
+            .reset_index()
+        )
+        cal_table["Prob. prevista %"] = (cal_table["Prob"] * 100).round(1)
+        cal_table["CLV positivo %"] = (cal_table["Pos"] * 100).round(1)
+        cal_table["CLV médio %"] = (cal_table["CLV"] * 100).round(2)
 
-        if not close_rows.empty:
-            source_summary = (
-                close_rows
-                .groupby(
-                    ["close_type", "closing_source"],
-                    dropna=False,
-                )
-                .agg(
-                    Jogos=("id", "count"),
-                    CLV_medio=("clv_display", "mean"),
-                    CLV_positivo=(
-                        "clv_display",
-                        lambda series: (series > 0).mean(),
-                    ),
-                )
-                .reset_index()
-            )
-
-            source_summary["CLV médio %"] = (
-                source_summary["CLV_medio"] * 100
-            ).round(2)
-            source_summary["CLV positivo %"] = (
-                source_summary["CLV_positivo"] * 100
-            ).round(1)
-            source_summary["Origem"] = source_summary[
-                "closing_source"
-            ].fillna("Sem descrição")
-            source_summary["Tipo"] = source_summary[
-                "close_type"
-            ]
-
-            with st.expander(
-                "Ver origem das closing odds",
-                expanded=False,
-            ):
-                st.dataframe(
-                    source_summary[
-                        [
-                            "Tipo",
-                            "Origem",
-                            "Jogos",
-                            "CLV positivo %",
-                            "CLV médio %",
-                        ]
-                    ],
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            bins = [
-                -0.001,
-                0.30,
-                0.35,
-                0.40,
-                0.45,
-                0.50,
-                0.55,
-                1.001,
-            ]
-            labels = [
-                "<30%",
-                "30–35%",
-                "35–40%",
-                "40–45%",
-                "45–50%",
-                "50–55%",
-                "55%+",
-            ]
-
-            calibration = close_rows.copy()
-            calibration["Faixa"] = pd.cut(
-                calibration["clv_probability"],
-                bins=bins,
-                labels=labels,
-                include_lowest=True,
-            )
-            calibration["CLV positivo"] = (
-                calibration["clv_display"] > 0
-            ).astype(int)
-
-            calibration_table = (
-                calibration
-                .dropna(subset=["Faixa"])
-                .groupby(
-                    "Faixa",
-                    observed=False,
-                )
-                .agg(
-                    Jogos=("id", "count"),
-                    Prob_prevista=(
-                        "clv_probability",
-                        "mean",
-                    ),
-                    CLV_positivo=(
-                        "CLV positivo",
-                        "mean",
-                    ),
-                    CLV_medio=(
-                        "clv_display",
-                        "mean",
-                    ),
-                )
-                .reset_index()
-            )
-
-            calibration_table[
-                "Prob. prevista %"
-            ] = (
-                calibration_table["Prob_prevista"]
-                * 100
-            ).round(1)
-
-            calibration_table[
-                "CLV positivo %"
-            ] = (
-                calibration_table["CLV_positivo"]
-                * 100
-            ).round(1)
-
-            calibration_table[
-                "CLV médio %"
-            ] = (
-                calibration_table["CLV_medio"]
-                * 100
-            ).round(2)
-
-            st.markdown("#### Calibração real do modelo CLV")
-            st.caption(
-                "Compara a probabilidade prevista de CLV+ com a percentagem real de closing odds positivas."
-            )
-
-            st.dataframe(
-                calibration_table[
-                    [
-                        "Faixa",
-                        "Jogos",
-                        "Prob. prevista %",
-                        "CLV positivo %",
-                        "CLV médio %",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            chart = calibration_table.set_index(
-                "Faixa"
-            )[
+        st.markdown("#### Calibração por faixa")
+        st.dataframe(
+            cal_table[
                 [
+                    "Faixa",
+                    "Jogos",
                     "Prob. prevista %",
                     "CLV positivo %",
+                    "CLV médio %",
                 ]
-            ]
-            st.bar_chart(chart)
-
-        resolved_signals = paper_filtered[
-            (paper_filtered["signal"] == 1)
-            & (paper_filtered["status"] == "RESOLVED")
-        ].copy()
-
-        st.markdown("#### Resultado dos sinais")
-
-        signal_metrics = st.columns(4)
-        signal_metrics[0].metric(
-            "Sinais resolvidos",
-            number(len(resolved_signals)),
-        )
-
-        signal_profit = pd.to_numeric(
-            resolved_signals.get(
-                "profit",
-                pd.Series(dtype=float),
-            ),
-            errors="coerce",
-        ).fillna(0)
-
-        signal_stakes = pd.to_numeric(
-            resolved_signals.get(
-                "planned_stake",
-                pd.Series(dtype=float),
-            ),
-            errors="coerce",
-        ).fillna(0)
-
-        total_profit = signal_profit.sum()
-        total_stake = signal_stakes.sum()
-
-        signal_metrics[1].metric(
-            "Lucro",
-            units(total_profit),
-            euros(total_profit, unit_value),
-        )
-        signal_metrics[2].metric(
-            "ROI",
-            percentage(
-                total_profit / total_stake
-                if total_stake > 0
-                else np.nan
-            ),
-        )
-        signal_metrics[3].metric(
-            "Over 2.5 acertado",
-            percentage(
-                pd.to_numeric(
-                    resolved_signals.get(
-                        "result_over25",
-                        pd.Series(dtype=float),
-                    ),
-                    errors="coerce",
-                ).mean()
-            ),
-        )
-
-        if not resolved_signals.empty:
-            curve = resolved_signals.copy()
-            curve["profit_numeric"] = pd.to_numeric(
-                curve["profit"],
-                errors="coerce",
-            ).fillna(0)
-            curve = curve.sort_values(
-                ["fixture_date_dt", "id"]
-            )
-            curve["Lucro acumulado (u)"] = (
-                curve["profit_numeric"].cumsum()
-            )
-            curve = curve.set_index(
-                "fixture_date_dt"
-            )
-
-            st.line_chart(
-                curve[["Lucro acumulado (u)"]]
-            )
-
-
-# ============================================================
-# ESTADO DO SISTEMA
-# ============================================================
-
-elif page == "⚙️ Estado do Sistema":
-    st.subheader("⚙️ Estado do sistema cloud")
-
-    st.success("✅ Ligação à Turso ativa")
-
-    total_history = np.nan
-    latest_history = "—"
-    total_leagues = np.nan
-
-    if not history_summary.empty:
-        summary = history_summary.iloc[0]
-        total_history = summary.get("total_matches")
-        total_leagues = summary.get("total_leagues")
-        latest_history = str(
-            summary.get("latest_match") or "—"
-        )
-
-    system_metrics = st.columns(4)
-    system_metrics[0].metric(
-        "Jogos históricos",
-        number(total_history),
-    )
-    system_metrics[1].metric(
-        "Ligas históricas",
-        number(total_leagues),
-    )
-    system_metrics[2].metric(
-        "Último histórico",
-        latest_history,
-    )
-    system_metrics[3].metric(
-        "Upcoming ativos",
-        number(len(upcoming)),
-    )
-
-    st.markdown("#### Cobertura das closing odds")
-
-    if paper.empty:
-        st.info("Sem Paper Trades.")
-    else:
-        coverage = st.columns(4)
-        coverage[0].metric(
-            "Total Paper Trades",
-            number(len(paper)),
-        )
-        coverage[1].metric(
-            "🟢 Pré-jogo",
-            number(
-                (paper["close_group"] == "Pré-jogo").sum()
-            ),
-        )
-        coverage[2].metric(
-            "🟠 Pós-jogo",
-            number(
-                (paper["close_group"] == "Pós-jogo").sum()
-            ),
-        )
-        coverage[3].metric(
-            "Sem CLOSE",
-            number(
-                (paper["close_group"] == "Sem CLOSE").sum()
-            ),
-        )
-
-        source_counts = (
-            paper[
-                paper["clv_display"].notna()
-            ]
-            .groupby(
-                ["close_type", "closing_source"],
-                dropna=False,
-            )
-            .size()
-            .reset_index(name="Jogos")
-        )
-
-        if not source_counts.empty:
-            source_counts["Origem"] = source_counts[
-                "closing_source"
-            ].fillna("Sem descrição")
-            source_counts["Tipo"] = source_counts[
-                "close_type"
-            ]
-
-            st.dataframe(
-                source_counts[
-                    ["Tipo", "Origem", "Jogos"]
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-    st.markdown("#### Últimas atualizações observadas")
-
-    health_rows = []
-
-    if not upcoming.empty:
-        for label, column in (
-            (
-                "Upcoming / odds atuais",
-                "current_observed_at",
-            ),
-            (
-                "Primeira observação upcoming",
-                "first_observed_at",
-            ),
-        ):
-            if column in upcoming.columns:
-                values = upcoming[column].dropna()
-                health_rows.append(
-                    {
-                        "Componente": label,
-                        "Última atualização": (
-                            timestamp_text(values.max())
-                            if not values.empty
-                            else "—"
-                        ),
-                    }
-                )
-
-    if not paper.empty:
-        for label, column in (
-            (
-                "Paper Trade",
-                "prediction_timestamp",
-            ),
-            (
-                "Closing odds pré-jogo",
-                "closing_observed_at",
-            ),
-        ):
-            if column in paper.columns:
-                values = paper[column].dropna()
-                health_rows.append(
-                    {
-                        "Componente": label,
-                        "Última atualização": (
-                            timestamp_text(values.max())
-                            if not values.empty
-                            else "—"
-                        ),
-                    }
-                )
-
-        resolved_dates = paper.loc[
-            paper["status"] == "RESOLVED",
-            "fixture_date",
-        ].dropna()
-
-        health_rows.append(
-            {
-                "Componente": "Último jogo resolvido",
-                "Última atualização": (
-                    str(resolved_dates.max())
-                    if not resolved_dates.empty
-                    else "—"
-                ),
-            }
-        )
-
-    if health_rows:
-        st.dataframe(
-            pd.DataFrame(health_rows),
+            ],
             use_container_width=True,
             hide_index=True,
         )
 
-    with st.expander("Ver tabelas disponíveis na Turso"):
+        st.markdown("#### 🧪 Teste shadow de thresholds")
+        st.caption(
+            "Compara 40%, 45%, 50%, 52.5% e 55% retrospetivamente. "
+            "Não altera o robô e o threshold real continua em 55%."
+        )
+
+        tt = threshold_test(close_rows)
+        st.dataframe(
+            tt[
+                [
+                    "Threshold",
+                    "Tipo",
+                    "Jogos",
+                    "Cobertura %",
+                    "Prob. média %",
+                    "CLV positivo %",
+                    "CLV médio %",
+                    "CLV mediano %",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.bar_chart(
+            tt.set_index("Threshold")[
+                ["CLV positivo %", "CLV médio %"]
+            ]
+        )
+
+        row50 = tt[np.isclose(tt["threshold"], 0.50)].iloc[0]
+        row55 = tt[np.isclose(tt["threshold"], 0.55)].iloc[0]
+        c = st.columns(4)
+        c[0].metric("Jogos ≥50%", int(row50["Jogos"]))
+        c[1].metric(
+            "CLV+ ≥50%",
+            f"{row50['CLV positivo %']:.1f}%"
+            if not pd.isna(row50["CLV positivo %"])
+            else "—",
+        )
+        c[2].metric("Jogos ≥55%", int(row55["Jogos"]))
+        c[3].metric(
+            "CLV+ ≥55%",
+            f"{row55['CLV positivo %']:.1f}%"
+            if not pd.isna(row55["CLV positivo %"])
+            else "—",
+        )
+
+        st.info(
+            "O objetivo não é escolher a melhor linha com 2 ou 3 jogos. "
+            "Procura um padrão estável durante dezenas de observações, "
+            "sobretudo nas CLOSE pré-jogo."
+        )
+
+    resolved_signals = paper_view[
+        (paper_view["signal"] == 1)
+        & (paper_view["status"] == "RESOLVED")
+    ].copy()
+
+    st.markdown("#### Resultado dos sinais reais")
+    p = pd.to_numeric(
+        resolved_signals.get("profit", pd.Series(dtype=float)),
+        errors="coerce",
+    ).fillna(0)
+    s = pd.to_numeric(
+        resolved_signals.get("planned_stake", pd.Series(dtype=float)),
+        errors="coerce",
+    ).fillna(0)
+    profit = p.sum()
+    stake = s.sum()
+
+    sm = st.columns(4)
+    sm[0].metric("Sinais resolvidos", len(resolved_signals))
+    sm[1].metric("Lucro", units(profit), euros(profit, unit_value))
+    sm[2].metric("ROI", pct(profit / stake if stake > 0 else np.nan))
+    sm[3].metric(
+        "Over 2.5 acertado",
+        pct(
+            pd.to_numeric(
+                resolved_signals.get(
+                    "result_over25",
+                    pd.Series(dtype=float),
+                ),
+                errors="coerce",
+            ).mean()
+        ),
+    )
+
+
+elif page == "⚙️ Estado do Sistema":
+    st.subheader("⚙️ Estado do sistema")
+    st.success("✅ Ligação à Turso ativa")
+
+    summary = history.iloc[0] if not history.empty else pd.Series(dtype=object)
+    m = st.columns(4)
+    m[0].metric("Jogos históricos", num(summary.get("total_matches")))
+    m[1].metric("Ligas históricas", num(summary.get("total_leagues")))
+    m[2].metric("Último histórico", str(summary.get("latest_match") or "—"))
+    m[3].metric("Upcoming ativos", len(upcoming))
+
+    st.markdown("#### Cobertura das CLOSE")
+    c = st.columns(4)
+    c[0].metric("Paper Trades", len(paper))
+    c[1].metric("🟢 Pré-jogo", int((paper["close_group"] == "Pré-jogo").sum()) if len(paper) else 0)
+    c[2].metric("🟠 Pós-jogo", int((paper["close_group"] == "Pós-jogo").sum()) if len(paper) else 0)
+    c[3].metric("Sem CLOSE", int((paper["close_group"] == "Sem CLOSE").sum()) if len(paper) else 0)
+
+    with st.expander("Tabelas disponíveis na Turso"):
         st.write(sorted(tables))
 
     st.caption(
-        "A dashboard é apenas de leitura: não altera previsões, odds, resultados ou o modelo."
+        "A dashboard é apenas de leitura e não altera previsões, odds, "
+        "resultados ou thresholds."
     )
 
 
