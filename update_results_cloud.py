@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -14,11 +17,27 @@ import pandas as pd
 from ml.paper_trade import normalize_league, normalize_team
 
 
+# ============================================================
+# CONFIGURAÇÃO
+# ============================================================
+
 APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
 
 FOOTBALL_DATA_BASE_URL = (
     "https://www.football-data.co.uk/mmz4281"
 )
+
+ODDS_API_BASE_URL = (
+    "https://api.the-odds-api.com/v4"
+)
+
+# A API de scores permite procurar jogos concluídos recentes.
+ODDS_API_DAYS_FROM = 3
+
+
+# ============================================================
+# MAPAS DE LIGAS
+# ============================================================
 
 FOOTBALL_DATA_DIVISION = {
     "Belgium First Division A": "B1",
@@ -41,18 +60,58 @@ FOOTBALL_DATA_DIVISION = {
     "Turkey Super Lig": "T1",
 }
 
+LEAGUE_SPORT_KEY = {
+    "Belgium First Division A": "soccer_belgium_first_div",
+    "England": "soccer_epl",
+    "England Championship": "soccer_efl_champ",
+    "England League One": "soccer_england_league1",
+    "England League Two": "soccer_england_league2",
+    "France": "soccer_france_ligue_one",
+    "France Ligue 2": "soccer_france_ligue_two",
+    "Germany": "soccer_germany_bundesliga",
+    "Germany 2 Bundesliga": "soccer_germany_bundesliga2",
+    "Greece Super League": "soccer_greece_super_league",
+    "Italy": "soccer_italy_serie_a",
+    "Italy Serie B": "soccer_italy_serie_b",
+    "Netherlands": "soccer_netherlands_eredivisie",
+    "Portugal": "soccer_portugal_primeira_liga",
+    "Scotland": "soccer_spl",
+    "Spain": "soccer_spain_la_liga",
+    "Spain Segunda Division": "soccer_spain_segunda_division",
+    "Turkey Super Lig": "soccer_turkey_super_league",
+}
+
+QUOTA_ERROR_MARKERS = (
+    "OUT_OF_USAGE_CREDITS",
+    "Usage quota has been reached",
+    "usage quota",
+)
+
+
+# ============================================================
+# TURSO
+# ============================================================
 
 def connect_turso():
-    import os
+    url = os.getenv(
+        "TURSO_DATABASE_URL",
+        "",
+    ).strip()
 
-    url = os.getenv("TURSO_DATABASE_URL", "").strip()
-    token = os.getenv("TURSO_AUTH_TOKEN", "").strip()
+    token = os.getenv(
+        "TURSO_AUTH_TOKEN",
+        "",
+    ).strip()
 
     if not url:
-        raise RuntimeError("TURSO_DATABASE_URL não configurada.")
+        raise RuntimeError(
+            "TURSO_DATABASE_URL não configurada."
+        )
 
     if not token:
-        raise RuntimeError("TURSO_AUTH_TOKEN não configurado.")
+        raise RuntimeError(
+            "TURSO_AUTH_TOKEN não configurado."
+        )
 
     return libsql.connect(
         database=url,
@@ -137,6 +196,10 @@ def add_column_if_missing(
 
     columns.add(name)
 
+
+# ============================================================
+# NORMALIZAÇÃO
+# ============================================================
 
 def normalize_name(
     value: object,
@@ -234,6 +297,10 @@ def team_names_match(
     )
 
 
+# ============================================================
+# DATAS / NÚMEROS
+# ============================================================
+
 def parse_db_date(
     value: object,
 ) -> date | None:
@@ -274,6 +341,41 @@ def parse_football_data_date(
         return None
 
     return parsed.date()
+
+
+def event_local_date(
+    event: dict,
+) -> date | None:
+    raw_value = event.get(
+        "commence_time"
+    )
+
+    if raw_value is None:
+        return None
+
+    text = str(raw_value).strip()
+
+    if not text:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(
+            text.replace(
+                "Z",
+                "+00:00",
+            )
+        )
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(
+            tzinfo=timezone.utc
+        )
+
+    return parsed.astimezone(
+        APP_TIMEZONE
+    ).date()
 
 
 def season_start_for(
@@ -349,9 +451,13 @@ def safe_odd(
     return number
 
 
+# ============================================================
+# HTTP
+# ============================================================
+
 def get_bytes(
     url: str,
-) -> bytes:
+) -> tuple[bytes, dict[str, str]]:
     request = Request(
         url,
         headers={
@@ -365,7 +471,15 @@ def get_bytes(
             request,
             timeout=30,
         ) as response:
-            return response.read()
+            content = response.read()
+
+            headers = {
+                key.lower(): value
+                for key, value
+                in response.headers.items()
+            }
+
+            return content, headers
 
     except HTTPError as error:
         try:
@@ -380,7 +494,7 @@ def get_bytes(
             detail = ""
 
         raise RuntimeError(
-            f"HTTP {error.code}: {detail[:300]}"
+            f"HTTP {error.code}: {detail[:400]}"
         ) from error
 
     except URLError as error:
@@ -388,6 +502,41 @@ def get_bytes(
             f"Erro de ligação: {error.reason}"
         ) from error
 
+
+def get_json(
+    url: str,
+) -> tuple[object, dict[str, str]]:
+    content, headers = get_bytes(url)
+
+    try:
+        payload = json.loads(
+            content.decode("utf-8")
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as error:
+        raise RuntimeError(
+            "Resposta JSON inválida."
+        ) from error
+
+    return payload, headers
+
+
+def is_quota_error(
+    error: Exception,
+) -> bool:
+    text = str(error).casefold()
+
+    return any(
+        marker.casefold() in text
+        for marker in QUOTA_ERROR_MARKERS
+    )
+
+
+# ============================================================
+# FOOTBALL-DATA.CO.UK
+# ============================================================
 
 def read_football_data_csv(
     content: bytes,
@@ -428,7 +577,7 @@ def fetch_football_data_league(
     )
 
     try:
-        content = get_bytes(url)
+        content, _ = get_bytes(url)
         raw = read_football_data_csv(content)
     except Exception as error:
         return [], str(error)
@@ -489,6 +638,7 @@ def fetch_football_data_league(
                 "away_team": str(away_team),
                 "home_goals": home_goals,
                 "away_goals": away_goals,
+                "source": "Football-Data",
             }
         )
 
@@ -532,6 +682,96 @@ def find_football_data_result(
 
     return None
 
+
+# ============================================================
+# THE ODDS API — FALLBACK DE RESULTADOS RECENTES
+# ============================================================
+
+def find_odds_api_event(
+    events: list[dict],
+    league: str,
+    fixture_date: date,
+    home_team: str,
+    away_team: str,
+) -> dict | None:
+    matches: list[dict] = []
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+
+        if not event.get("completed"):
+            continue
+
+        api_date = event_local_date(event)
+
+        if (
+            api_date is None
+            or api_date != fixture_date
+        ):
+            continue
+
+        if not team_names_match(
+            league,
+            event.get("home_team"),
+            home_team,
+        ):
+            continue
+
+        if not team_names_match(
+            league,
+            event.get("away_team"),
+            away_team,
+        ):
+            continue
+
+        matches.append(event)
+
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
+
+
+def extract_odds_api_score(
+    event: dict,
+    league: str,
+    team_name: str,
+) -> int | None:
+    scores = event.get("scores")
+
+    if not isinstance(scores, list):
+        return None
+
+    values: list[int] = []
+
+    for item in scores:
+        if not isinstance(item, dict):
+            continue
+
+        if not team_names_match(
+            league,
+            item.get("name"),
+            team_name,
+        ):
+            continue
+
+        score = safe_int(
+            item.get("score")
+        )
+
+        if score is not None:
+            values.append(score)
+
+    if len(values) == 1:
+        return values[0]
+
+    return None
+
+
+# ============================================================
+# RESOLVER TRADE
+# ============================================================
 
 def calculate_trade_values(
     row: dict,
@@ -631,30 +871,65 @@ def update_trade(
         away_goals,
     )
 
-    connection.execute(
-        f"""
-        UPDATE {table}
-        SET
-            status = 'RESOLVED',
-            home_goals = ?,
-            away_goals = ?,
-            result_over25 = ?,
-            profit = ?,
-            clv = ?
-        WHERE id = ?
-        """,
-        (
-            home_goals,
-            away_goals,
-            result_over25,
-            profit,
-            clv,
-            int(row["id"]),
-        ),
-    )
+    timestamp = datetime.now(
+        timezone.utc
+    ).replace(
+        microsecond=0
+    ).isoformat()
+
+    if "updated_at" in columns:
+        connection.execute(
+            f"""
+            UPDATE {table}
+            SET
+                status = 'RESOLVED',
+                home_goals = ?,
+                away_goals = ?,
+                result_over25 = ?,
+                profit = ?,
+                clv = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                home_goals,
+                away_goals,
+                result_over25,
+                profit,
+                clv,
+                timestamp,
+                int(row["id"]),
+            ),
+        )
+    else:
+        connection.execute(
+            f"""
+            UPDATE {table}
+            SET
+                status = 'RESOLVED',
+                home_goals = ?,
+                away_goals = ?,
+                result_over25 = ?,
+                profit = ?,
+                clv = ?
+            WHERE id = ?
+            """,
+            (
+                home_goals,
+                away_goals,
+                result_over25,
+                profit,
+                clv,
+                int(row["id"]),
+            ),
+        )
 
     return clv
 
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main() -> None:
     print()
@@ -812,10 +1087,15 @@ def main() -> None:
                 canonical_league
             )
 
+            sport_key = LEAGUE_SPORT_KEY.get(
+                canonical_league
+            )
+
             metadata_by_id[row_id] = {
                 "league": canonical_league,
                 "fixture_date": fixture_date,
                 "division": division,
+                "sport_key": sport_key,
             }
 
             if (
@@ -825,6 +1105,10 @@ def main() -> None:
                 required_football_data[
                     canonical_league
                 ] = division
+
+        # ====================================================
+        # 1) FOOTBALL-DATA — FONTE PRINCIPAL
+        # ====================================================
 
         print()
         print("Football-Data:")
@@ -868,6 +1152,7 @@ def main() -> None:
 
         resolved_ids: set[int] = set()
         resolved_football = 0
+        resolved_odds_api = 0
         with_clv = 0
         without_clv = 0
 
@@ -921,13 +1206,225 @@ def main() -> None:
                 with_clv += 1
 
             print(
-                f"✅ {fixture_date.isoformat()} "
+                f"✅ [Football-Data] "
+                f"{fixture_date.isoformat()} "
                 f"{row.get('home_team')} "
                 f"{home_goals}-{away_goals} "
                 f"{row.get('away_team')}"
             )
 
+        # Preserva imediatamente tudo o que a fonte principal resolveu.
         connection.commit()
+
+        # ====================================================
+        # 2) ODDS API — SÓ PARA NÃO RESOLVIDOS DOS ÚLTIMOS 3 DIAS
+        # ====================================================
+
+        recent_cutoff = (
+            today
+            - timedelta(
+                days=ODDS_API_DAYS_FROM
+            )
+        )
+
+        recent_remaining_rows: list[dict] = []
+
+        for row in rows:
+            row_id = int(row["id"])
+
+            if row_id in resolved_ids:
+                continue
+
+            fixture_date = metadata_by_id[
+                row_id
+            ]["fixture_date"]
+
+            if (
+                isinstance(fixture_date, date)
+                and fixture_date >= recent_cutoff
+            ):
+                recent_remaining_rows.append(row)
+
+        api_key = os.getenv(
+            "ODDS_API_KEY",
+            "",
+        ).strip()
+
+        api_quota_exhausted = False
+        api_errors: list[str] = []
+        credits_remaining: str | None = None
+
+        if (
+            api_key
+            and recent_remaining_rows
+        ):
+            print()
+            print("The Odds API fallback:")
+            print(
+                f"  Jogos recentes por resolver: "
+                f"{len(recent_remaining_rows)}"
+            )
+
+            needed_sport_keys = {
+                metadata_by_id[
+                    int(row["id"])
+                ]["sport_key"]
+                for row in recent_remaining_rows
+            }
+
+            needed_sport_keys.discard(None)
+
+            events_by_sport: dict[
+                str,
+                list[dict],
+            ] = {}
+
+            for sport_key in sorted(
+                str(value)
+                for value in needed_sport_keys
+            ):
+                query = urlencode(
+                    {
+                        "apiKey": api_key,
+                        "daysFrom": ODDS_API_DAYS_FROM,
+                        "dateFormat": "iso",
+                    }
+                )
+
+                url = (
+                    f"{ODDS_API_BASE_URL}"
+                    f"/sports/{sport_key}"
+                    f"/scores/?{query}"
+                )
+
+                try:
+                    payload, headers = get_json(url)
+                except Exception as error:
+                    api_errors.append(
+                        f"{sport_key}: {error}"
+                    )
+
+                    if is_quota_error(error):
+                        api_quota_exhausted = True
+                        print(
+                            "  ⚠ quota esgotada; "
+                            "fallback interrompido"
+                        )
+                        break
+
+                    print(
+                        f"  ⚠ {sport_key}: falhou"
+                    )
+                    continue
+
+                events_by_sport[
+                    sport_key
+                ] = (
+                    payload
+                    if isinstance(payload, list)
+                    else []
+                )
+
+                credits_remaining = headers.get(
+                    "x-requests-remaining",
+                    credits_remaining,
+                )
+
+                print(
+                    f"  ✅ {sport_key}: "
+                    f"{len(events_by_sport[sport_key])} eventos"
+                )
+
+            for row in recent_remaining_rows:
+                row_id = int(row["id"])
+
+                if row_id in resolved_ids:
+                    continue
+
+                metadata = metadata_by_id[row_id]
+                canonical_league = metadata["league"]
+                fixture_date = metadata["fixture_date"]
+                sport_key = metadata["sport_key"]
+
+                if (
+                    not isinstance(canonical_league, str)
+                    or not isinstance(fixture_date, date)
+                    or not sport_key
+                ):
+                    continue
+
+                event = find_odds_api_event(
+                    events_by_sport.get(
+                        str(sport_key),
+                        [],
+                    ),
+                    canonical_league,
+                    fixture_date,
+                    str(row.get("home_team", "")),
+                    str(row.get("away_team", "")),
+                )
+
+                if event is None:
+                    continue
+
+                home_goals = extract_odds_api_score(
+                    event,
+                    canonical_league,
+                    str(row.get("home_team", "")),
+                )
+
+                away_goals = extract_odds_api_score(
+                    event,
+                    canonical_league,
+                    str(row.get("away_team", "")),
+                )
+
+                if (
+                    home_goals is None
+                    or away_goals is None
+                ):
+                    continue
+
+                clv = update_trade(
+                    connection,
+                    table,
+                    row,
+                    columns,
+                    home_goals,
+                    away_goals,
+                )
+
+                resolved_ids.add(row_id)
+                resolved_odds_api += 1
+
+                if clv is None:
+                    without_clv += 1
+                else:
+                    with_clv += 1
+
+                print(
+                    f"✅ [Odds API] "
+                    f"{fixture_date.isoformat()} "
+                    f"{row.get('home_team')} "
+                    f"{home_goals}-{away_goals} "
+                    f"{row.get('away_team')}"
+                )
+
+            connection.commit()
+
+        elif not api_key:
+            print()
+            print(
+                "The Odds API fallback: "
+                "ODDS_API_KEY não configurada."
+            )
+
+        elif not recent_remaining_rows:
+            print()
+            print(
+                "The Odds API fallback: "
+                "não é necessário."
+            )
 
         remaining = [
             row
@@ -944,6 +1441,14 @@ def main() -> None:
             f"{resolved_football}"
         )
         print(
+            f"Resolvidos The Odds API   : "
+            f"{resolved_odds_api}"
+        )
+        print(
+            f"Resolvidos total          : "
+            f"{len(resolved_ids)}"
+        )
+        print(
             f"Com CLV válido            : {with_clv}"
         )
         print(
@@ -953,11 +1458,29 @@ def main() -> None:
             f"Ainda por resolver        : {len(remaining)}"
         )
 
+        if credits_remaining is not None:
+            print(
+                f"Créditos API restantes    : "
+                f"{credits_remaining}"
+            )
+
+        if api_quota_exhausted:
+            print(
+                "Quota Odds API            : ESGOTADA"
+            )
+
         if football_errors:
             print()
             print("Avisos Football-Data:")
 
             for error in football_errors[:10]:
+                print(f"  - {error}")
+
+        if api_errors:
+            print()
+            print("Avisos The Odds API:")
+
+            for error in api_errors[:10]:
                 print(f"  - {error}")
 
         if remaining:
@@ -982,9 +1505,9 @@ def main() -> None:
             "ou CLOSE."
         )
         print(
-            "A versão cloud usa Football-Data como "
-            "fonte de resultados para não gastar "
-            "créditos da The Odds API."
+            "Football-Data continua a ser a fonte principal. "
+            "A Odds API só é consultada para jogos recentes "
+            "que a fonte principal ainda não conseguiu resolver."
         )
 
     finally:
