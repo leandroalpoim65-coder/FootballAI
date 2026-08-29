@@ -35,12 +35,16 @@ ODDS_API_BASE_URL = (
     "https://api.the-odds-api.com/v4"
 )
 
-# ESPN não precisa de chave. Usamos apenas para jogos recentes que
-# o Football-Data ainda não conseguiu resolver.
 ESPN_RECENT_DAYS = 7
-
-# A Odds API fica como último fallback, caso ainda haja créditos.
 ODDS_API_DAYS_FROM = 3
+
+RECOVERED_CLOSE_SOURCE_AVG = (
+    "Football-Data / AvgC closing totals 2.5 / pós-jogo"
+)
+
+RECOVERED_CLOSE_SOURCE_B365 = (
+    "Football-Data / Bet365 closing totals 2.5 / pós-jogo"
+)
 
 
 # ============================================================
@@ -68,7 +72,6 @@ FOOTBALL_DATA_DIVISION = {
     "Turkey Super Lig": "T1",
 }
 
-# Slugs do scoreboard da ESPN.
 ESPN_LEAGUE_MAP = {
     "Belgium First Division A": "bel.1",
     "England": "eng.1",
@@ -247,7 +250,6 @@ def normalize_name(value: object) -> str:
     text = re.sub(r"\butd\b", " united ", text)
     text = re.sub(r"\bst\b", " saint ", text)
 
-    # Remove apenas abreviaturas de clube que não distinguem a equipa.
     text = re.sub(
         r"\b(fc|cf|afc|sc|fk|ac|sv|rcd|cd|club)\b",
         " ",
@@ -292,7 +294,6 @@ def team_names_match(
     if a == b:
         return True
 
-    # Pequenos aliases seguros observados nas fontes externas.
     aliases = {
         "bayern munich": "bayern munich",
         "bayern munchen": "bayern munich",
@@ -305,6 +306,13 @@ def team_names_match(
         "borussia monchengladbach": "m gladbach",
         "monchengladbach": "m gladbach",
         "m gladbach": "m gladbach",
+        "sporting cp": "sporting lisbon",
+        "sporting clube de portugal": "sporting lisbon",
+        "sporting lisbon": "sporting lisbon",
+        "sp lisbon": "sporting lisbon",
+        "sporting gijon": "sporting gijon",
+        "sporting de gijon": "sporting gijon",
+        "sp gijon": "sporting gijon",
     }
 
     return aliases.get(a, a) == aliases.get(b, b)
@@ -432,6 +440,19 @@ def safe_odd(value: object) -> float | None:
     return number
 
 
+def calculate_clv(
+    open_odd: object,
+    close_odd: object,
+) -> float | None:
+    open_value = safe_odd(open_odd)
+    close_value = safe_odd(close_odd)
+
+    if open_value is None or close_value is None:
+        return None
+
+    return open_value / close_value - 1.0
+
+
 # ============================================================
 # HTTP
 # ============================================================
@@ -537,6 +558,43 @@ def read_football_data_csv(
     )
 
 
+def extract_football_data_closing_odds(
+    row: pd.Series,
+) -> tuple[float | None, float | None, str | None]:
+    pairs = (
+        (
+            "AvgC>2.5",
+            "AvgC<2.5",
+            RECOVERED_CLOSE_SOURCE_AVG,
+        ),
+        (
+            "B365C>2.5",
+            "B365C<2.5",
+            RECOVERED_CLOSE_SOURCE_B365,
+        ),
+    )
+
+    for over_column, under_column, source in pairs:
+        over_value = safe_odd(
+            row.get(over_column)
+        )
+        under_value = safe_odd(
+            row.get(under_column)
+        )
+
+        if (
+            over_value is not None
+            and under_value is not None
+        ):
+            return (
+                over_value,
+                under_value,
+                source,
+            )
+
+    return None, None, None
+
+
 def fetch_football_data_league(
     canonical_league: str,
     division: str,
@@ -596,6 +654,12 @@ def fetch_football_data_league(
         if home_team is None or away_team is None:
             continue
 
+        (
+            close_over,
+            close_under,
+            closing_source,
+        ) = extract_football_data_closing_odds(row)
+
         results.append(
             {
                 "date": match_date,
@@ -604,6 +668,9 @@ def fetch_football_data_league(
                 "away_team": str(away_team),
                 "home_goals": home_goals,
                 "away_goals": away_goals,
+                "odd_over25_close": close_over,
+                "odd_under25_close": close_under,
+                "closing_source": closing_source,
             }
         )
 
@@ -643,6 +710,130 @@ def find_simple_result(
         matches.append(result)
 
     return matches[0] if len(matches) == 1 else None
+
+
+# ============================================================
+# RECUPERAR CLOSE PÓS-JOGO
+# ============================================================
+
+def backfill_existing_clv(
+    connection,
+    table: str,
+    row: dict,
+) -> bool:
+    if safe_float(row.get("clv")) is not None:
+        return False
+
+    clv = calculate_clv(
+        row.get("odd_over25_open"),
+        row.get("odd_over25_close"),
+    )
+
+    if clv is None:
+        return False
+
+    connection.execute(
+        f"""
+        UPDATE {table}
+        SET clv = ?
+        WHERE id = ?
+        """,
+        (
+            clv,
+            int(row["id"]),
+        ),
+    )
+
+    row["clv"] = clv
+    return True
+
+
+def recover_closing_from_football_data(
+    connection,
+    table: str,
+    row: dict,
+    result: dict,
+) -> tuple[bool, bool]:
+    existing_over = safe_odd(
+        row.get("odd_over25_close")
+    )
+    existing_under = safe_odd(
+        row.get("odd_under25_close")
+    )
+
+    if (
+        existing_over is not None
+        and existing_under is not None
+    ):
+        clv_backfilled = backfill_existing_clv(
+            connection,
+            table,
+            row,
+        )
+        return False, clv_backfilled
+
+    recovered_over = safe_odd(
+        result.get("odd_over25_close")
+    )
+    recovered_under = safe_odd(
+        result.get("odd_under25_close")
+    )
+    source = result.get("closing_source")
+
+    if (
+        recovered_over is None
+        or recovered_under is None
+        or not source
+    ):
+        return False, False
+
+    clv = calculate_clv(
+        row.get("odd_over25_open"),
+        recovered_over,
+    )
+
+    observed_at = datetime.now(
+        timezone.utc
+    ).replace(
+        microsecond=0
+    ).isoformat()
+
+    connection.execute(
+        f"""
+        UPDATE {table}
+        SET
+            odd_over25_close = ?,
+            odd_under25_close = ?,
+            closing_observed_at = ?,
+            closing_minutes_before_kickoff = NULL,
+            closing_source = ?,
+            clv = ?
+        WHERE id = ?
+          AND (
+                odd_over25_close IS NULL
+             OR odd_over25_close <= 1.0
+             OR odd_under25_close IS NULL
+             OR odd_under25_close <= 1.0
+          )
+        """,
+        (
+            recovered_over,
+            recovered_under,
+            observed_at,
+            str(source),
+            clv,
+            int(row["id"]),
+        ),
+    )
+
+    row["odd_over25_close"] = recovered_over
+    row["odd_under25_close"] = recovered_under
+    row["closing_observed_at"] = observed_at
+    row["closing_minutes_before_kickoff"] = None
+    row["closing_source"] = str(source)
+    row["clv"] = clv
+
+    return True, clv is not None
 
 
 # ============================================================
@@ -897,7 +1088,6 @@ def extract_odds_api_score(
 
 def calculate_trade_values(
     row: dict,
-    columns: set[str],
     home_goals: int,
     away_goals: int,
 ) -> tuple[int, float, float | None]:
@@ -919,16 +1109,8 @@ def calculate_trade_values(
     except (TypeError, ValueError):
         planned_stake = 0.0
 
-    open_odd = (
-        safe_odd(row.get("odd_over25_open"))
-        if "odd_over25_open" in columns
-        else None
-    )
-
-    close_odd = (
-        safe_odd(row.get("odd_over25_close"))
-        if "odd_over25_close" in columns
-        else None
+    open_odd = safe_odd(
+        row.get("odd_over25_open")
     )
 
     profit = 0.0
@@ -946,16 +1128,10 @@ def calculate_trade_values(
         else:
             profit = -planned_stake
 
-    clv = None
-    if (
-        open_odd is not None
-        and close_odd is not None
-    ):
-        clv = (
-            open_odd
-            / close_odd
-            - 1.0
-        )
+    clv = calculate_clv(
+        row.get("odd_over25_open"),
+        row.get("odd_over25_close"),
+    )
 
     return result_over25, profit, clv
 
@@ -971,7 +1147,6 @@ def update_trade(
     result_over25, profit, clv = (
         calculate_trade_values(
             row,
-            columns,
             home_goals,
             away_goals,
         )
@@ -1030,6 +1205,13 @@ def update_trade(
             ),
         )
 
+    row["status"] = "RESOLVED"
+    row["home_goals"] = home_goals
+    row["away_goals"] = away_goals
+    row["result_over25"] = result_over25
+    row["profit"] = profit
+    row["clv"] = clv
+
     return clv
 
 
@@ -1087,6 +1269,9 @@ def main() -> None:
             ("clv", "REAL"),
             ("odd_over25_close", "REAL"),
             ("odd_under25_close", "REAL"),
+            ("closing_observed_at", "TEXT"),
+            ("closing_minutes_before_kickoff", "REAL"),
+            ("closing_source", "TEXT"),
         ):
             add_column_if_missing(
                 connection,
@@ -1132,13 +1317,12 @@ def main() -> None:
             )
             raise SystemExit(1)
 
-        rows = fetch_dicts(
+        season_rows = fetch_dicts(
             connection,
             f"""
             SELECT *
             FROM {table}
-            WHERE COALESCE(status, 'OPEN') != 'RESOLVED'
-              AND date({fixture_date_column}) <= date(?)
+            WHERE date({fixture_date_column}) <= date(?)
               AND date({fixture_date_column}) >= date(?)
             ORDER BY {fixture_date_column}, id
             """,
@@ -1148,18 +1332,22 @@ def main() -> None:
             ),
         )
 
-        print(f"Registos candidatos       : {len(rows)}")
+        rows = [
+            row
+            for row in season_rows
+            if str(
+                row.get("status") or "OPEN"
+            ).strip().upper()
+            != "RESOLVED"
+        ]
 
-        if not rows:
-            print(
-                "✅ Nada para resolver neste momento."
-            )
-            return
+        print(f"Registos da época         : {len(season_rows)}")
+        print(f"Registos candidatos       : {len(rows)}")
 
         metadata_by_id: dict[int, dict[str, object]] = {}
         required_football_data: dict[str, str] = {}
 
-        for row in rows:
+        for row in season_rows:
             row_id = int(row["id"])
             canonical_league = normalize_league(
                 row.get("league")
@@ -1200,9 +1388,11 @@ def main() -> None:
         resolved_odds_api = 0
         with_clv = 0
         without_clv = 0
+        recovered_closes = 0
+        clv_backfilled = 0
 
         # ====================================================
-        # 1) FOOTBALL-DATA — FONTE PRINCIPAL
+        # 1) FOOTBALL-DATA — RESULTADOS + CLOSE RECUPERADA
         # ====================================================
 
         print()
@@ -1230,15 +1420,84 @@ def main() -> None:
                 continue
 
             football_results.extend(results)
+            with_close = sum(
+                1
+                for result in results
+                if safe_odd(
+                    result.get("odd_over25_close")
+                ) is not None
+                and safe_odd(
+                    result.get("odd_under25_close")
+                ) is not None
+            )
+
             print(
                 f"  ✅ {division} {canonical_league}: "
-                f"{len(results)} resultados"
+                f"{len(results)} resultados | "
+                f"{with_close} com closing 2.5"
             )
 
         print(
             f"Resultados Football-Data  : {len(football_results)}"
         )
 
+        # Primeiro recuperamos CLOSE em qualquer trade da época,
+        # inclusive trades já RESOLVED. Nunca substituímos uma CLOSE
+        # válida que tenha sido capturada pré-jogo.
+        for row in season_rows:
+            row_id = int(row["id"])
+            metadata = metadata_by_id[row_id]
+            canonical_league = metadata["league"]
+            fixture_date = metadata["fixture_date"]
+
+            if (
+                not isinstance(canonical_league, str)
+                or not isinstance(fixture_date, date)
+            ):
+                continue
+
+            result = find_simple_result(
+                football_results,
+                canonical_league,
+                fixture_date,
+                str(row.get("home_team", "")),
+                str(row.get("away_team", "")),
+            )
+
+            if result is None:
+                if backfill_existing_clv(
+                    connection,
+                    table,
+                    row,
+                ):
+                    clv_backfilled += 1
+                continue
+
+            recovered, got_clv = (
+                recover_closing_from_football_data(
+                    connection,
+                    table,
+                    row,
+                    result,
+                )
+            )
+
+            if recovered:
+                recovered_closes += 1
+                clv_backfilled += int(got_clv)
+
+                print(
+                    f"🟦 [CLOSE recuperada] "
+                    f"{fixture_date.isoformat()} "
+                    f"{row.get('home_team')} vs "
+                    f"{row.get('away_team')} "
+                    f"| Over {row.get('odd_over25_close'):.3f} "
+                    f"| {row.get('closing_source')}"
+                )
+
+        connection.commit()
+
+        # Agora resolvemos os trades ainda OPEN através do Football-Data.
         for row in rows:
             row_id = int(row["id"])
             metadata = metadata_by_id[row_id]
@@ -1620,6 +1879,12 @@ def main() -> None:
         print(" RESUMO")
         print("==========================================")
         print(
+            f"CLOSE recuperadas pós-jogo: {recovered_closes}"
+        )
+        print(
+            f"CLV preenchidos/recalculados: {clv_backfilled}"
+        )
+        print(
             f"Resolvidos Football-Data  : {resolved_football}"
         )
         print(
@@ -1675,17 +1940,22 @@ def main() -> None:
                 )
 
         print()
+        print("Qualidade das closing odds:")
         print(
-            "CLV é calculado apenas quando existem "
-            "OPEN e CLOSE válidas."
+            "  - The Odds API = captura pré-jogo, quando disponível."
         )
         print(
-            "Este script nunca altera as odds OPEN "
-            "ou CLOSE."
+            "  - Football-Data = CLOSE recuperada pós-jogo; "
+            "fica identificada em closing_source e nunca substitui "
+            "uma CLOSE pré-jogo válida."
+        )
+        print()
+        print(
+            "CLV = odd_over25_open / odd_over25_close - 1."
         )
         print(
-            "Ordem das fontes: Football-Data → ESPN → "
-            "The Odds API. A ESPN não usa a quota da Odds API."
+            "Ordem das fontes de resultados: Football-Data → ESPN → "
+            "The Odds API."
         )
 
     finally:
