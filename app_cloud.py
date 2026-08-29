@@ -47,25 +47,12 @@ st.markdown(
             font-size: 1.65rem;
         }
 
-        .hero-card {
-            border: 1px solid rgba(128, 128, 128, 0.22);
-            border-radius: 16px;
-            padding: 1rem 1.15rem;
-            margin-bottom: 0.75rem;
+        .source-card {
+            border: 1px solid rgba(128, 128, 128, 0.20);
+            border-radius: 14px;
+            padding: 0.85rem 1rem;
+            margin: 0.4rem 0 0.9rem 0;
             background: rgba(128, 128, 128, 0.035);
-        }
-
-        .signal-card {
-            border-left: 5px solid #20a464;
-        }
-
-        .warning-card {
-            border-left: 5px solid #e6a23c;
-        }
-
-        .muted {
-            opacity: 0.72;
-            font-size: 0.9rem;
         }
 
         @media (max-width: 700px) {
@@ -164,20 +151,6 @@ def list_tables() -> set[str]:
     )
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def table_columns(table_name: str) -> set[str]:
-    frame = query_dataframe(
-        f"PRAGMA table_info({table_name})"
-    )
-
-    if frame.empty or "name" not in frame.columns:
-        return set()
-
-    return set(
-        frame["name"].astype(str).tolist()
-    )
-
-
 # ============================================================
 # FORMATAÇÃO
 # ============================================================
@@ -239,20 +212,26 @@ def clean_status(value) -> str:
 
 
 def status_badge(value) -> str:
-    status = clean_status(value)
+    return (
+        "✅ RESOLVIDO"
+        if clean_status(value) == "RESOLVED"
+        else "🟡 OPEN"
+    )
 
-    if status == "RESOLVED":
-        return "✅ RESOLVIDO"
 
-    return "🟡 OPEN"
+def signal_badge(value) -> str:
+    try:
+        return (
+            "🟢 SINAL"
+            if int(value or 0) == 1
+            else "⚪ SEM SINAL"
+        )
+    except (TypeError, ValueError):
+        return "⚪ SEM SINAL"
 
 
 def result_badge(row: pd.Series) -> str:
-    status = clean_status(
-        row.get("status")
-    )
-
-    if status != "RESOLVED":
+    if clean_status(row.get("status")) != "RESOLVED":
         return "⏳"
 
     result = row.get("result_over25")
@@ -261,13 +240,6 @@ def result_badge(row: pd.Series) -> str:
         return "—"
 
     return "✅ OVER" if int(result) == 1 else "❌ UNDER"
-
-
-def signal_badge(value) -> str:
-    try:
-        return "🟢 SINAL" if int(value or 0) == 1 else "⚪ SEM SINAL"
-    except (TypeError, ValueError):
-        return "⚪ SEM SINAL"
 
 
 def timestamp_text(value) -> str:
@@ -284,18 +256,68 @@ def timestamp_text(value) -> str:
         return str(value)
 
     try:
-        local = parsed.tz_convert(
-            APP_TIMEZONE
-        )
-        return local.strftime(
-            "%d/%m/%Y %H:%M"
-        )
+        local = parsed.tz_convert(APP_TIMEZONE)
+        return local.strftime("%d/%m/%Y %H:%M")
     except Exception:
         return str(value)
 
 
 # ============================================================
-# DADOS
+# CLASSIFICAÇÃO DA CLOSE
+# ============================================================
+
+def classify_close_source(row: pd.Series) -> str:
+    close_odd = row.get("odd_over25_close")
+
+    try:
+        valid_close = float(close_odd) > 1.0
+    except (TypeError, ValueError):
+        valid_close = False
+
+    if not valid_close:
+        return "⚪ Sem CLOSE"
+
+    source = str(row.get("closing_source") or "").strip()
+    source_lower = source.casefold()
+
+    if (
+        "football-data" in source_lower
+        or "pós-jogo" in source_lower
+        or "pos-jogo" in source_lower
+    ):
+        return "🟠 Recuperada pós-jogo"
+
+    minutes = row.get("closing_minutes_before_kickoff")
+
+    try:
+        if not pd.isna(minutes) and float(minutes) >= 0:
+            return "🟢 Capturada pré-jogo"
+    except (TypeError, ValueError):
+        pass
+
+    if "odds api" in source_lower:
+        return "🟢 Capturada pré-jogo"
+
+    return "⚪ CLOSE sem origem classificada"
+
+
+def close_group(value: str) -> str:
+    text = str(value)
+
+    if text.startswith("🟢"):
+        return "Pré-jogo"
+
+    if text.startswith("🟠"):
+        return "Pós-jogo"
+
+    if "Sem CLOSE" in text:
+        return "Sem CLOSE"
+
+    return "Outra"
+
+
+# ============================================================
+# PREPARAÇÃO DOS DADOS
 # ============================================================
 
 def prepare_paper(frame: pd.DataFrame) -> pd.DataFrame:
@@ -336,33 +358,35 @@ def prepare_paper(frame: pd.DataFrame) -> pd.DataFrame:
             clean_status
         )
 
-    if (
-        "odd_over25_open" in result.columns
-        and "odd_over25_close" in result.columns
-    ):
-        valid_close = (
-            result["odd_over25_open"].gt(1.0)
-            & result["odd_over25_close"].gt(1.0)
-        )
+    valid_close = (
+        result.get(
+            "odd_over25_open",
+            pd.Series(np.nan, index=result.index),
+        ).gt(1.0)
+        & result.get(
+            "odd_over25_close",
+            pd.Series(np.nan, index=result.index),
+        ).gt(1.0)
+    )
 
-        result["clv_display"] = np.nan
-        result.loc[
-            valid_close,
-            "clv_display",
-        ] = (
-            result.loc[
-                valid_close,
-                "odd_over25_open",
-            ]
-            / result.loc[
-                valid_close,
-                "odd_over25_close",
-            ]
-            - 1.0
-        )
+    result["clv_display"] = np.nan
+    result.loc[
+        valid_close,
+        "clv_display",
+    ] = (
+        result.loc[valid_close, "odd_over25_open"]
+        / result.loc[valid_close, "odd_over25_close"]
+        - 1.0
+    )
 
-    elif "clv" in result.columns:
-        result["clv_display"] = result["clv"]
+    result["close_type"] = result.apply(
+        classify_close_source,
+        axis=1,
+    )
+
+    result["close_group"] = result[
+        "close_type"
+    ].apply(close_group)
 
     return result
 
@@ -461,27 +485,24 @@ def paper_display(frame: pd.DataFrame) -> pd.DataFrame:
         pd.Series(np.nan, index=frame.index),
     ).round(3)
 
-    if "odd_over25_close" in frame.columns:
-        display["CLOSE Over"] = frame[
-            "odd_over25_close"
-        ].round(3)
+    display["CLOSE Over"] = frame.get(
+        "odd_over25_close",
+        pd.Series(np.nan, index=frame.index),
+    ).round(3)
 
-    if "fair_probability_open" in frame.columns:
-        display["Mercado %"] = (
-            frame["fair_probability_open"]
-            * 100
-        ).round(1)
+    display["Tipo CLOSE"] = frame.get(
+        "close_type",
+        pd.Series("⚪ Sem CLOSE", index=frame.index),
+    )
 
     if "clv_probability" in frame.columns:
         display["Prob. CLV+ %"] = (
-            frame["clv_probability"]
-            * 100
+            frame["clv_probability"] * 100
         ).round(1)
 
     if "clv_display" in frame.columns:
         display["CLV %"] = (
-            frame["clv_display"]
-            * 100
+            frame["clv_display"] * 100
         ).round(2)
 
     display["Resultado"] = frame.apply(
@@ -559,9 +580,7 @@ def upcoming_display(frame: pd.DataFrame) -> pd.DataFrame:
 try:
     tables = list_tables()
 except Exception as error:
-    st.error(
-        "Não foi possível ligar à base Turso."
-    )
+    st.error("Não foi possível ligar à base Turso.")
     st.code(str(error))
     st.info(
         "No Streamlit Community Cloud adiciona TURSO_DATABASE_URL "
@@ -678,7 +697,7 @@ st.sidebar.caption(
 
 
 # ============================================================
-# FILTRO GLOBAL DE LIGA
+# FILTRO GLOBAL
 # ============================================================
 
 paper_filtered = paper.copy()
@@ -732,47 +751,21 @@ if page == "🏠 Resumo":
         )
 
         open_count = int(
-            (
-                paper_filtered.get(
-                    "status",
-                    pd.Series("OPEN", index=paper_filtered.index),
-                )
-                == "OPEN"
-            ).sum()
+            (paper_filtered["status"] == "OPEN").sum()
         )
-
         resolved_count = int(
-            (
-                paper_filtered.get(
-                    "status",
-                    pd.Series("OPEN", index=paper_filtered.index),
-                )
-                == "RESOLVED"
-            ).sum()
+            (paper_filtered["status"] == "RESOLVED").sum()
         )
-
-        close_count = int(
-            paper_filtered.get(
-                "odd_over25_close",
-                pd.Series(np.nan, index=paper_filtered.index),
-            ).gt(1.0).sum()
+        pregame_count = int(
+            (paper_filtered["close_group"] == "Pré-jogo").sum()
+        )
+        recovered_count = int(
+            (paper_filtered["close_group"] == "Pós-jogo").sum()
         )
 
         signal_resolved = paper_filtered[
-            (
-                paper_filtered.get(
-                    "signal",
-                    pd.Series(0, index=paper_filtered.index),
-                )
-                == 1
-            )
-            & (
-                paper_filtered.get(
-                    "status",
-                    pd.Series("OPEN", index=paper_filtered.index),
-                )
-                == "RESOLVED"
-            )
+            (paper_filtered["signal"] == 1)
+            & (paper_filtered["status"] == "RESOLVED")
         ].copy()
 
         signal_profit = pd.to_numeric(
@@ -817,46 +810,31 @@ if page == "🏠 Resumo":
 
         metric_row_2 = st.columns(4)
         metric_row_2[0].metric(
-            "CLOSE capturadas",
-            number(close_count),
+            "🟢 CLOSE pré-jogo",
+            number(pregame_count),
         )
         metric_row_2[1].metric(
+            "🟠 CLOSE pós-jogo",
+            number(recovered_count),
+        )
+        metric_row_2[2].metric(
             "Lucro dos sinais",
             units(signal_profit),
             euros(signal_profit, unit_value),
         )
-        metric_row_2[2].metric(
+        metric_row_2[3].metric(
             "ROI dos sinais",
             percentage(signal_roi),
-        )
-
-        valid_signal_clv = signal_resolved.get(
-            "clv_display",
-            pd.Series(dtype=float),
-        ).dropna()
-
-        metric_row_2[3].metric(
-            "CLV médio dos sinais",
-            percentage(
-                valid_signal_clv.mean()
-                if not valid_signal_clv.empty
-                else np.nan
-            ),
         )
 
         st.subheader("🎯 Sinais mais recentes")
 
         signals = paper_filtered[
-            paper_filtered.get(
-                "signal",
-                pd.Series(0, index=paper_filtered.index),
-            ) == 1
+            paper_filtered["signal"] == 1
         ].head(8)
 
         if signals.empty:
-            st.info(
-                "Ainda não existem sinais registados."
-            )
+            st.info("Ainda não existem sinais registados.")
         else:
             st.dataframe(
                 paper_display(signals),
@@ -899,26 +877,16 @@ elif page == "🎯 Sinais":
         st.info("Sem Paper Trades.")
     else:
         signals = paper_filtered[
-            paper_filtered.get(
-                "signal",
-                pd.Series(0, index=paper_filtered.index),
-            ) == 1
+            paper_filtered["signal"] == 1
         ].copy()
 
         status_filter = st.segmented_control(
             "Estado",
-            options=[
-                "Todos",
-                "OPEN",
-                "RESOLVED",
-            ],
+            options=["Todos", "OPEN", "RESOLVED"],
             default="Todos",
         )
 
-        if status_filter in {
-            "OPEN",
-            "RESOLVED",
-        }:
+        if status_filter in {"OPEN", "RESOLVED"}:
             signals = signals[
                 signals["status"] == status_filter
             ].copy()
@@ -944,63 +912,6 @@ elif page == "🎯 Sinais":
                 use_container_width=True,
             )
 
-            selected_id = st.selectbox(
-                "Ver detalhe de um sinal",
-                options=signals["id"].astype(int).tolist(),
-                format_func=lambda trade_id: (
-                    f"#{trade_id} — "
-                    + str(
-                        signals.loc[
-                            signals["id"] == trade_id,
-                            "home_team",
-                        ].iloc[0]
-                    )
-                    + " vs "
-                    + str(
-                        signals.loc[
-                            signals["id"] == trade_id,
-                            "away_team",
-                        ].iloc[0]
-                    )
-                ),
-            )
-
-            detail = signals[
-                signals["id"] == selected_id
-            ].iloc[0]
-
-            detail_columns = st.columns(3)
-            detail_columns[0].metric(
-                "Probabilidade CLV+",
-                percentage(
-                    detail.get("clv_probability")
-                ),
-            )
-            detail_columns[1].metric(
-                "OPEN Over",
-                number(
-                    detail.get("odd_over25_open"),
-                    3,
-                ),
-            )
-            detail_columns[2].metric(
-                "CLOSE Over",
-                number(
-                    detail.get("odd_over25_close"),
-                    3,
-                ),
-            )
-
-            if not pd.isna(
-                detail.get("clv_display", np.nan)
-            ):
-                st.success(
-                    "CLV observado: "
-                    + percentage(
-                        detail.get("clv_display")
-                    )
-                )
-
 
 # ============================================================
 # PAPER TRADES
@@ -1012,7 +923,7 @@ elif page == "🧾 Paper Trades":
     if paper_filtered.empty:
         st.info("Sem Paper Trades.")
     else:
-        filter_columns = st.columns(3)
+        filter_columns = st.columns(4)
 
         status_values = filter_columns[0].multiselect(
             "Estado",
@@ -1026,7 +937,17 @@ elif page == "🧾 Paper Trades":
             value=False,
         )
 
-        sort_mode = filter_columns[2].selectbox(
+        close_filter = filter_columns[2].selectbox(
+            "Tipo de CLOSE",
+            [
+                "Todas",
+                "Pré-jogo",
+                "Pós-jogo",
+                "Sem CLOSE",
+            ],
+        )
+
+        sort_mode = filter_columns[3].selectbox(
             "Ordenar por",
             [
                 "Mais recentes",
@@ -1039,14 +960,17 @@ elif page == "🧾 Paper Trades":
 
         if status_values:
             displayed = displayed[
-                displayed["status"].isin(
-                    status_values
-                )
+                displayed["status"].isin(status_values)
             ].copy()
 
         if only_signals:
             displayed = displayed[
                 displayed["signal"] == 1
+            ].copy()
+
+        if close_filter != "Todas":
+            displayed = displayed[
+                displayed["close_group"] == close_filter
             ].copy()
 
         if sort_mode == "Maior prob. CLV+":
@@ -1148,19 +1072,6 @@ elif page == "📅 Próximos Jogos":
                 hide_index=True,
             )
 
-            if "current_observed_at" in future.columns:
-                latest_observation = future[
-                    "current_observed_at"
-                ].dropna()
-
-                if not latest_observation.empty:
-                    st.caption(
-                        "Última observação de odds: "
-                        + timestamp_text(
-                            latest_observation.max()
-                        )
-                    )
-
 
 # ============================================================
 # CLV / PERFORMANCE
@@ -1177,19 +1088,68 @@ elif page == "📈 CLV & Performance":
     if paper_filtered.empty:
         st.info("Sem dados suficientes.")
     else:
-        close_rows = paper_filtered[
-            paper_filtered.get(
-                "clv_display",
-                pd.Series(np.nan, index=paper_filtered.index),
-            ).notna()
+        all_close_rows = paper_filtered[
+            paper_filtered["clv_display"].notna()
         ].copy()
+
+        pregame_rows = all_close_rows[
+            all_close_rows["close_group"] == "Pré-jogo"
+        ].copy()
+
+        recovered_rows = all_close_rows[
+            all_close_rows["close_group"] == "Pós-jogo"
+        ].copy()
+
+        coverage_metrics = st.columns(3)
+        coverage_metrics[0].metric(
+            "CLOSE válidas",
+            number(len(all_close_rows)),
+        )
+        coverage_metrics[1].metric(
+            "🟢 Pré-jogo",
+            number(len(pregame_rows)),
+        )
+        coverage_metrics[2].metric(
+            "🟠 Recuperadas pós-jogo",
+            number(len(recovered_rows)),
+        )
+
+        st.markdown("#### Qualidade da amostra CLV")
+
+        close_mode = st.segmented_control(
+            "Analisar",
+            options=[
+                "Todas",
+                "🟢 Pré-jogo",
+                "🟠 Pós-jogo",
+            ],
+            default="Todas",
+        )
+
+        if close_mode == "🟢 Pré-jogo":
+            close_rows = pregame_rows.copy()
+            st.success(
+                "Amostra de maior qualidade: closing odds capturadas antes do kickoff."
+            )
+        elif close_mode == "🟠 Pós-jogo":
+            close_rows = recovered_rows.copy()
+            st.warning(
+                "Estas CLOSE foram recuperadas posteriormente no Football-Data. "
+                "São úteis para análise, mas podem usar uma agregação de casas diferente da OPEN."
+            )
+        else:
+            close_rows = all_close_rows.copy()
+            if not recovered_rows.empty:
+                st.warning(
+                    "A vista 'Todas' mistura CLOSE pré-jogo com CLOSE recuperadas pós-jogo. "
+                    "Para decisões sobre o modelo, dá mais peso à amostra pré-jogo."
+                )
 
         close_metrics = st.columns(4)
         close_metrics[0].metric(
-            "CLOSE válidas",
+            "Jogos analisados",
             number(len(close_rows)),
         )
-
         close_metrics[1].metric(
             "CLV médio",
             percentage(
@@ -1198,18 +1158,14 @@ elif page == "📈 CLV & Performance":
                 else np.nan
             ),
         )
-
         close_metrics[2].metric(
             "CLV positivo",
             percentage(
-                (
-                    close_rows["clv_display"] > 0
-                ).mean()
+                (close_rows["clv_display"] > 0).mean()
                 if not close_rows.empty
                 else np.nan
             ),
         )
-
         close_metrics[3].metric(
             "CLV mediano",
             percentage(
@@ -1221,11 +1177,59 @@ elif page == "📈 CLV & Performance":
 
         if len(close_rows) < 50:
             st.warning(
-                "A amostra de closing odds ainda é pequena. "
-                "Evita ajustar limiares do modelo com base nestes poucos jogos."
+                "A amostra selecionada ainda é pequena. "
+                "Evita alterar o limiar do modelo apenas com base nestes jogos."
             )
 
         if not close_rows.empty:
+            source_summary = (
+                close_rows
+                .groupby(
+                    ["close_type", "closing_source"],
+                    dropna=False,
+                )
+                .agg(
+                    Jogos=("id", "count"),
+                    CLV_medio=("clv_display", "mean"),
+                    CLV_positivo=(
+                        "clv_display",
+                        lambda series: (series > 0).mean(),
+                    ),
+                )
+                .reset_index()
+            )
+
+            source_summary["CLV médio %"] = (
+                source_summary["CLV_medio"] * 100
+            ).round(2)
+            source_summary["CLV positivo %"] = (
+                source_summary["CLV_positivo"] * 100
+            ).round(1)
+            source_summary["Origem"] = source_summary[
+                "closing_source"
+            ].fillna("Sem descrição")
+            source_summary["Tipo"] = source_summary[
+                "close_type"
+            ]
+
+            with st.expander(
+                "Ver origem das closing odds",
+                expanded=False,
+            ):
+                st.dataframe(
+                    source_summary[
+                        [
+                            "Tipo",
+                            "Origem",
+                            "Jogos",
+                            "CLV positivo %",
+                            "CLV médio %",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
             bins = [
                 -0.001,
                 0.30,
@@ -1285,33 +1289,25 @@ elif page == "📈 CLV & Performance":
             calibration_table[
                 "Prob. prevista %"
             ] = (
-                calibration_table[
-                    "Prob_prevista"
-                ]
+                calibration_table["Prob_prevista"]
                 * 100
             ).round(1)
 
             calibration_table[
                 "CLV positivo %"
             ] = (
-                calibration_table[
-                    "CLV_positivo"
-                ]
+                calibration_table["CLV_positivo"]
                 * 100
             ).round(1)
 
             calibration_table[
                 "CLV médio %"
             ] = (
-                calibration_table[
-                    "CLV_medio"
-                ]
+                calibration_table["CLV_medio"]
                 * 100
             ).round(2)
 
-            st.markdown(
-                "#### Calibração real do modelo CLV"
-            )
+            st.markdown("#### Calibração real do modelo CLV")
             st.caption(
                 "Compara a probabilidade prevista de CLV+ com a percentagem real de closing odds positivas."
             )
@@ -1341,20 +1337,8 @@ elif page == "📈 CLV & Performance":
             st.bar_chart(chart)
 
         resolved_signals = paper_filtered[
-            (
-                paper_filtered.get(
-                    "signal",
-                    pd.Series(0, index=paper_filtered.index),
-                )
-                == 1
-            )
-            & (
-                paper_filtered.get(
-                    "status",
-                    pd.Series("OPEN", index=paper_filtered.index),
-                )
-                == "RESOLVED"
-            )
+            (paper_filtered["signal"] == 1)
+            & (paper_filtered["status"] == "RESOLVED")
         ].copy()
 
         st.markdown("#### Resultado dos sinais")
@@ -1417,10 +1401,7 @@ elif page == "📈 CLV & Performance":
                 errors="coerce",
             ).fillna(0)
             curve = curve.sort_values(
-                [
-                    "fixture_date_dt",
-                    "id",
-                ]
+                ["fixture_date_dt", "id"]
             )
             curve["Lucro acumulado (u)"] = (
                 curve["profit_numeric"].cumsum()
@@ -1473,6 +1454,63 @@ elif page == "⚙️ Estado do Sistema":
         number(len(upcoming)),
     )
 
+    st.markdown("#### Cobertura das closing odds")
+
+    if paper.empty:
+        st.info("Sem Paper Trades.")
+    else:
+        coverage = st.columns(4)
+        coverage[0].metric(
+            "Total Paper Trades",
+            number(len(paper)),
+        )
+        coverage[1].metric(
+            "🟢 Pré-jogo",
+            number(
+                (paper["close_group"] == "Pré-jogo").sum()
+            ),
+        )
+        coverage[2].metric(
+            "🟠 Pós-jogo",
+            number(
+                (paper["close_group"] == "Pós-jogo").sum()
+            ),
+        )
+        coverage[3].metric(
+            "Sem CLOSE",
+            number(
+                (paper["close_group"] == "Sem CLOSE").sum()
+            ),
+        )
+
+        source_counts = (
+            paper[
+                paper["clv_display"].notna()
+            ]
+            .groupby(
+                ["close_type", "closing_source"],
+                dropna=False,
+            )
+            .size()
+            .reset_index(name="Jogos")
+        )
+
+        if not source_counts.empty:
+            source_counts["Origem"] = source_counts[
+                "closing_source"
+            ].fillna("Sem descrição")
+            source_counts["Tipo"] = source_counts[
+                "close_type"
+            ]
+
+            st.dataframe(
+                source_counts[
+                    ["Tipo", "Origem", "Jogos"]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
     st.markdown("#### Últimas atualizações observadas")
 
     health_rows = []
@@ -1508,7 +1546,7 @@ elif page == "⚙️ Estado do Sistema":
                 "prediction_timestamp",
             ),
             (
-                "Closing odds",
+                "Closing odds pré-jogo",
                 "closing_observed_at",
             ),
         ):
@@ -1526,10 +1564,7 @@ elif page == "⚙️ Estado do Sistema":
                 )
 
         resolved_dates = paper.loc[
-            paper.get(
-                "status",
-                pd.Series("OPEN", index=paper.index),
-            ) == "RESOLVED",
+            paper["status"] == "RESOLVED",
             "fixture_date",
         ].dropna()
 
@@ -1549,47 +1584,6 @@ elif page == "⚙️ Estado do Sistema":
             pd.DataFrame(health_rows),
             use_container_width=True,
             hide_index=True,
-        )
-
-    st.markdown("#### Cobertura do Paper Trade")
-
-    if paper.empty:
-        st.info("Sem Paper Trades.")
-    else:
-        coverage = st.columns(4)
-        coverage[0].metric(
-            "Total",
-            number(len(paper)),
-        )
-        coverage[1].metric(
-            "Com CLOSE",
-            number(
-                paper.get(
-                    "odd_over25_close",
-                    pd.Series(np.nan, index=paper.index),
-                ).gt(1.0).sum()
-            ),
-        )
-        coverage[2].metric(
-            "Com CLV calculável",
-            number(
-                paper.get(
-                    "clv_display",
-                    pd.Series(np.nan, index=paper.index),
-                ).notna().sum()
-            ),
-        )
-        coverage[3].metric(
-            "Sinais",
-            number(
-                pd.to_numeric(
-                    paper.get(
-                        "signal",
-                        pd.Series(0, index=paper.index),
-                    ),
-                    errors="coerce",
-                ).fillna(0).sum()
-            ),
         )
 
     with st.expander("Ver tabelas disponíveis na Turso"):
