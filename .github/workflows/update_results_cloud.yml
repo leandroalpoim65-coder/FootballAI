@@ -34,9 +34,9 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           echo "=========================================="
-          echo " 1/2 — SOFASCORE RESULTS"
+          echo " 1/2 — ESPN ROBUST RESULTS"
           echo "=========================================="
-          python sofascore_results_cloud.py
+          python espn_results_fallback_cloud.py
 
           echo
           echo "=========================================="
