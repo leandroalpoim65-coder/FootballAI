@@ -12,7 +12,7 @@ concurrency:
 jobs:
   update-results:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -39,8 +39,9 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python update_results_cloud.py
 
-      - name: Replace provisional snapshots with final closing odds
+      - name: Finalize and backfill closing odds
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python finalize_closing_quality_cloud.py
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python finalize_closing_quality_v2_cloud.py
