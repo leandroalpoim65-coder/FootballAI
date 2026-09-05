@@ -1,0 +1,62 @@
+name: One-time Results Repair 2026-09-05
+
+on:
+  push:
+    paths:
+      - "repair_results_20260905.py"
+      - ".github/workflows/repair_results_20260905.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: footballai-results-repair-20260905
+  cancel-in-progress: false
+
+jobs:
+  repair-results:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile update_results_cloud.py
+          python -m py_compile espn_results_fallback_cloud.py
+          python -m py_compile api_football_results_fallback_cloud.py
+          python -m py_compile repair_results_20260905.py
+
+      - name: Resolve recent results with ESPN
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python espn_results_fallback_cloud.py
+
+      - name: Resolve results with primary cloud updater
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python update_results_cloud.py
+
+      - name: Resolve stale results with API-Football
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python api_football_results_fallback_cloud.py
+
+      - name: Mark verified postponed fixtures VOID and audit
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python repair_results_20260905.py
