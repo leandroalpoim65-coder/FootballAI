@@ -7,6 +7,9 @@ on:
       - ".github/workflows/repair_results_20260905.yml"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: footballai-results-repair-20260905
   cancel-in-progress: false
@@ -59,4 +62,17 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python repair_results_20260905.py
+        run: python repair_results_20260905.py | tee repair_audit_20260905.txt
+
+      - name: Publish audit result
+        if: always()
+        run: |
+          {
+            echo
+            echo "WORKFLOW_FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> repair_audit_20260905.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repair_audit_20260905.txt
+          git diff --cached --quiet || git commit -m "Record one-time results repair audit"
+          git push
