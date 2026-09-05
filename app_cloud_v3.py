@@ -141,7 +141,10 @@ def prep_upcoming(df):
 
 
 def result_badge(row):
-    if row.get("status") != "RESOLVED":
+    status = str(row.get("status") or "OPEN").strip().upper()
+    if status == "VOID":
+        return "⚪ VOID"
+    if status != "RESOLVED":
         return "⏳"
     v = row.get("result_over25")
     return "—" if pd.isna(v) else ("✅ OVER" if int(v) == 1 else "❌ UNDER")
@@ -152,7 +155,7 @@ def paper_table(df):
         return df
     out = pd.DataFrame(index=df.index)
     out["Decisão"] = df["signal"].apply(lambda x: "🟢 SINAL" if int(x or 0) == 1 else "⚪ SEM SINAL")
-    out["Estado"] = df["status"].map({"RESOLVED": "✅ RESOLVIDO", "OPEN": "🟡 OPEN"}).fillna(df["status"])
+    out["Estado"] = df["status"].map({"RESOLVED": "✅ RESOLVIDO", "OPEN": "🟡 OPEN", "VOID": "⚪ VOID / ADIADO"}).fillna(df["status"])
     out["Data"] = df.get("fixture_date", "")
     out["Hora"] = df.get("fixture_time", "")
     out["Liga"] = df.get("league", "")
@@ -279,14 +282,14 @@ elif page == "🎯 Sinais":
     st.subheader("🎯 Sinais reais do modelo")
     st.caption("Threshold real congelado em 55%. A análise shadow não altera sinais.")
     signals = pv[pv["signal"] == 1].copy()
-    mode = st.segmented_control("Estado", ["Todos", "OPEN", "RESOLVED"], default="Todos")
-    if mode in {"OPEN", "RESOLVED"}: signals = signals[signals["status"] == mode]
+    mode = st.segmented_control("Estado", ["Todos", "OPEN", "RESOLVED", "VOID"], default="Todos")
+    if mode in {"OPEN", "RESOLVED", "VOID"}: signals = signals[signals["status"] == mode]
     st.dataframe(paper_table(signals), use_container_width=True, hide_index=True)
 
 elif page == "🧾 Paper Trades":
     st.subheader("🧾 Paper Trades")
     c1,c2,c3,c4 = st.columns(4)
-    statuses = c1.multiselect("Estado", ["OPEN","RESOLVED"], default=[], placeholder="Todos")
+    statuses = c1.multiselect("Estado", ["OPEN","RESOLVED","VOID"], default=[], placeholder="Todos")
     only_signals = c2.toggle("Só sinais")
     ctype = c3.selectbox("Tipo CLOSE", ["Todas","CLOSE pré-jogo","CLOSE Football-Data","Snapshot API-Football","Sem CLOSE","Outra CLOSE"])
     order = c4.selectbox("Ordenar", ["Mais recentes","Maior prob. CLV+","Maior CLV"])
