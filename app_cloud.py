@@ -237,7 +237,10 @@ def prepare_upcoming(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def result_badge(row: pd.Series) -> str:
-    if row.get("status") != "RESOLVED":
+    status = str(row.get("status") or "OPEN").strip().upper()
+    if status == "VOID":
+        return "⚪ VOID"
+    if status != "RESOLVED":
         return "⏳"
     value = row.get("result_over25")
     if pd.isna(value):
@@ -254,7 +257,7 @@ def paper_table(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: "🟢 SINAL" if int(x or 0) == 1 else "⚪ SEM SINAL"
     )
     out["Estado"] = df["status"].map(
-        {"RESOLVED": "✅ RESOLVIDO", "OPEN": "🟡 OPEN"}
+        {"RESOLVED": "✅ RESOLVIDO", "OPEN": "🟡 OPEN", "VOID": "⚪ VOID / ADIADO"}
     ).fillna(df["status"])
     out["Data"] = df.get("fixture_date", "")
     out["Hora"] = df.get("fixture_time", "")
@@ -635,10 +638,10 @@ elif page == "🎯 Sinais":
 
     mode = st.segmented_control(
         "Estado",
-        ["Todos", "OPEN", "RESOLVED"],
+        ["Todos", "OPEN", "RESOLVED", "VOID"],
         default="Todos",
     )
-    if mode in {"OPEN", "RESOLVED"}:
+    if mode in {"OPEN", "RESOLVED", "VOID"}:
         signals = signals[signals["status"] == mode]
 
     st.dataframe(
@@ -654,7 +657,7 @@ elif page == "🧾 Paper Trades":
     c1, c2, c3, c4 = st.columns(4)
     statuses = c1.multiselect(
         "Estado",
-        ["OPEN", "RESOLVED"],
+        ["OPEN", "RESOLVED", "VOID"],
         default=[],
         placeholder="Todos",
     )
