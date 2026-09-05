@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "repair_results_20260905.py"
+      - "manual_resolve_20260905.py"
       - ".github/workflows/repair_results_20260905.yml"
   workflow_dispatch:
 
@@ -57,6 +58,12 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: python api_football_results_fallback_cloud.py
+
+      - name: Resolve four validated remaining fixtures
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python manual_resolve_20260905.py
 
       - name: Mark verified postponed fixtures VOID and audit
         env:
