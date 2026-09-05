@@ -254,6 +254,101 @@ def build_message(
     )
 
 
+def discover_telegram_chats(
+    bot_token: str,
+) -> list[dict]:
+    url = (
+        f"{TELEGRAM_API_BASE}/bot"
+        f"{bot_token}/getUpdates"
+    )
+
+    request = Request(
+        url,
+        headers={
+            "User-Agent":
+                "FootballAI-Telegram-Notifier/1.0",
+            "Accept":
+                "application/json",
+        },
+    )
+
+    try:
+        with urlopen(
+            request,
+            timeout=30,
+        ) as response:
+            raw = response.read()
+    except Exception as error:
+        raise RuntimeError(
+            f"Não foi possível ler getUpdates: {error}"
+        ) from error
+
+    try:
+        result = json.loads(
+            raw.decode("utf-8")
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as error:
+        raise RuntimeError(
+            "Resposta inválida do Telegram."
+        ) from error
+
+    if not isinstance(result, dict) or not result.get("ok"):
+        raise RuntimeError(
+            "Telegram recusou getUpdates."
+        )
+
+    updates = result.get("result", [])
+    if not isinstance(updates, list):
+        return []
+
+    chats: dict[str, dict] = {}
+
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+
+        message = (
+            update.get("message")
+            or update.get("edited_message")
+            or update.get("channel_post")
+        )
+
+        if not isinstance(message, dict):
+            continue
+
+        chat = message.get("chat")
+        if not isinstance(chat, dict):
+            continue
+
+        chat_id = chat.get("id")
+        if chat_id is None:
+            continue
+
+        key = str(chat_id)
+        chats[key] = {
+            "id": key,
+            "type": str(
+                chat.get("type") or ""
+            ),
+            "username": str(
+                chat.get("username") or ""
+            ),
+            "first_name": str(
+                chat.get("first_name") or ""
+            ),
+            "title": str(
+                chat.get("title") or ""
+            ),
+        }
+
+    return list(
+        chats.values()
+    )
+
+
 def send_telegram(
     bot_token: str,
     chat_id: str,
@@ -360,13 +455,57 @@ def main() -> None:
         "",
     ).strip()
 
-    if not bot_token or not chat_id:
+    if not bot_token:
         print(
-            "⚪ Telegram ainda não configurado."
+            "⚪ TELEGRAM_BOT_TOKEN ainda não configurado."
+        )
+        return
+
+    if not chat_id:
+        print(
+            "⚪ TELEGRAM_CHAT_ID ainda não configurado."
         )
         print(
-            "Adicionar GitHub Actions secrets: "
-            "TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID."
+            "Envia /start ao bot no Telegram e volta a executar "
+            "este workflow. Os chats detetados aparecem abaixo."
+        )
+
+        try:
+            chats = discover_telegram_chats(
+                bot_token
+            )
+        except Exception as error:
+            print(
+                f"⚠ Não foi possível descobrir chats: {error}"
+            )
+            return
+
+        if not chats:
+            print(
+                "Nenhum chat encontrado. Envia primeiro /start ao bot."
+            )
+            return
+
+        print()
+        print("Chats Telegram detetados:")
+
+        for chat in chats:
+            label = (
+                chat.get("username")
+                or chat.get("first_name")
+                or chat.get("title")
+                or "sem nome"
+            )
+
+            print(
+                f"  - ID {chat['id']} | "
+                f"{chat.get('type') or '?'} | "
+                f"{label}"
+            )
+
+        print()
+        print(
+            "Adicionar o ID correto ao secret TELEGRAM_CHAT_ID."
         )
         return
 
