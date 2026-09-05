@@ -1,0 +1,12 @@
+=== MARCAR JOGOS ADIADOS COMO VOID ===
+JÁ VOID id=243 | 2026-08-22 | Nijmegen vs Excelsior
+JÁ VOID id=164 | 2026-08-16 | Sp Braga vs Gil Vicente
+
+=== PENDENTES ATÉ 2026-09-05 ===
+id=612 | 2026-09-05 | England League One | Burton vs Cambridge | status=OPEN
+id=625 | 2026-09-05 | Spain | Ath Bilbao vs Ath Madrid | status=OPEN
+id=651 | 2026-09-05 | Spain | Villarreal vs La Coruna | status=OPEN
+id=653 | 2026-09-05 | Portugal | Sp Lisbon vs Nacional | status=OPEN
+TOTAL_PENDENTES=4
+
+WORKFLOW_FINISHED_AT=2026-09-05T21:40:52Z
