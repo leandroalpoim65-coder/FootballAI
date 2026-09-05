@@ -503,7 +503,7 @@ def main() -> None:
             f"""
             SELECT *
             FROM {table}
-            WHERE COALESCE(status, 'OPEN') != 'RESOLVED'
+            WHERE UPPER(COALESCE(status, 'OPEN')) NOT IN ('RESOLVED', 'VOID')
               AND date({fixture_date_column}) <= date(?)
               AND date({fixture_date_column}) >= date(?)
             ORDER BY {fixture_date_column}, id
