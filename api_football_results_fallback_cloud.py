@@ -632,7 +632,7 @@ def main() -> None:
             f"""
             SELECT *
             FROM {table}
-            WHERE COALESCE(status, 'OPEN') != 'RESOLVED'
+            WHERE UPPER(COALESCE(status, 'OPEN')) NOT IN ('RESOLVED', 'VOID')
               AND date({date_col}) <= date(?)
               AND date({date_col}) >= date(?)
             ORDER BY {date_col}, {time_col}, id
