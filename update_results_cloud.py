@@ -1362,7 +1362,7 @@ def main() -> None:
             if str(
                 row.get("status") or "OPEN"
             ).strip().upper()
-            != "RESOLVED"
+            not in {"RESOLVED", "VOID"}
         ]
 
         print(f"Registos da época         : {len(season_rows)}")
