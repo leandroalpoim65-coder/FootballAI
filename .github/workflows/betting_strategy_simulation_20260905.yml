@@ -25,12 +25,18 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python betting_strategy_simulation_20260905.py
+        run: |
+          set +e
+          python betting_strategy_simulation_20260905.py > betting_strategy_simulation_run_20260905.txt 2>&1
+          code=$?
+          echo "EXIT_CODE=$code" >> betting_strategy_simulation_run_20260905.txt
+          exit 0
       - name: Publish simulation
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add betting_strategy_simulation_20260905.txt
+          git add betting_strategy_simulation_run_20260905.txt
+          if [ -f betting_strategy_simulation_20260905.txt ]; then git add betting_strategy_simulation_20260905.txt; fi
           git diff --cached --quiet || git commit -m "Record betting strategy simulation"
           git push
