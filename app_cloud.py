@@ -112,25 +112,36 @@ def status_text(value) -> str:
 
 
 def classify_close(row: pd.Series) -> str:
-    try:
-        if float(row.get("odd_over25_close")) <= 1:
-            return "Sem CLOSE"
-    except Exception:
+    over = pd.to_numeric(
+        pd.Series([row.get("odd_over25_close")]),
+        errors="coerce",
+    ).iloc[0]
+    under = pd.to_numeric(
+        pd.Series([row.get("odd_under25_close")]),
+        errors="coerce",
+    ).iloc[0]
+
+    if (
+        pd.isna(over)
+        or pd.isna(under)
+        or float(over) <= 1
+        or float(under) <= 1
+    ):
         return "Sem CLOSE"
 
     source = str(row.get("closing_source") or "").casefold()
+
+    if "api-football" in source:
+        if "live pre-kickoff" in source:
+            return "Pré-jogo"
+        return "Snapshot API-Football"
+
     if "football-data" in source or "pós-jogo" in source or "pos-jogo" in source:
         return "Pós-jogo"
 
-    try:
-        minutes = float(row.get("closing_minutes_before_kickoff"))
-        if minutes >= 0:
-            return "Pré-jogo"
-    except Exception:
-        pass
-
-    if "odds api" in source:
+    if "the odds api" in source or "odds api" in source:
         return "Pré-jogo"
+
     return "Outra"
 
 
@@ -138,6 +149,7 @@ def close_badge(group: str) -> str:
     return {
         "Pré-jogo": "🟢 Pré-jogo",
         "Pós-jogo": "🟠 Pós-jogo",
+        "Snapshot API-Football": "🟡 Snapshot API-Football",
         "Sem CLOSE": "⚪ Sem CLOSE",
     }.get(group, "⚪ Outra")
 
@@ -328,6 +340,126 @@ def threshold_test(close_rows: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+SHADOW_STRATEGIES = [
+    ("40% + odd ≥1.60", 0.40, 1.60),
+    ("45% + odd ≥1.60", 0.45, 1.60),
+    ("50% + odd ≥1.60", 0.50, 1.60),
+    ("55% atual", 0.55, 1.00),
+]
+
+
+def hypothetical_profit(row: pd.Series) -> float:
+    odd = row.get("odd_over25_open")
+    result = row.get("result_over25")
+    try:
+        odd = float(odd)
+        result = int(result)
+    except (TypeError, ValueError):
+        return np.nan
+
+    if odd <= 1 or result not in {0, 1}:
+        return np.nan
+
+    return odd - 1 if result == 1 else -1.0
+
+
+def shadow_strategy_summary(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    resolved = df[
+        (df["status"] == "RESOLVED")
+        & df["clv_probability"].notna()
+        & df["odd_over25_open"].gt(1)
+        & df["result_over25"].isin([0, 1])
+    ].copy()
+
+    if resolved.empty:
+        return pd.DataFrame()
+
+    resolved["shadow_profit"] = resolved.apply(hypothetical_profit, axis=1)
+
+    rows = []
+    for name, threshold, min_odd in SHADOW_STRATEGIES:
+        picked = resolved[
+            (resolved["clv_probability"] >= threshold)
+            & (resolved["odd_over25_open"] >= min_odd)
+        ].copy()
+
+        n = len(picked)
+        profit = picked["shadow_profit"].sum() if n else np.nan
+        clv_usable = picked[picked["clv_display"].notna()]
+
+        rows.append(
+            {
+                "Estratégia": name,
+                "Threshold": threshold,
+                "Odd mínima": min_odd,
+                "Jogos": n,
+                "Over %": round(100 * picked["result_over25"].mean(), 1) if n else np.nan,
+                "Odd média": round(picked["odd_over25_open"].mean(), 3) if n else np.nan,
+                "Lucro (u)": round(profit, 3) if n else np.nan,
+                "ROI %": round(100 * profit / n, 2) if n else np.nan,
+                "CLOSE": len(clv_usable),
+                "CLV+ %": round(
+                    100 * (clv_usable["clv_display"] > 0).mean(),
+                    1,
+                ) if len(clv_usable) else np.nan,
+                "CLV médio %": round(
+                    100 * clv_usable["clv_display"].mean(),
+                    2,
+                ) if len(clv_usable) else np.nan,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def shadow_by_close_quality(df: pd.DataFrame, threshold: float, min_odd: float) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    picked = df[
+        (df["status"] == "RESOLVED")
+        & (df["clv_probability"] >= threshold)
+        & (df["odd_over25_open"] >= min_odd)
+        & df["result_over25"].isin([0, 1])
+    ].copy()
+
+    if picked.empty:
+        return pd.DataFrame()
+
+    picked["shadow_profit"] = picked.apply(hypothetical_profit, axis=1)
+
+    rows = []
+    for group in ["Pré-jogo", "Pós-jogo", "Snapshot API-Football", "Sem CLOSE"]:
+        sample = picked[picked["close_group"] == group]
+        if sample.empty:
+            continue
+
+        with_clv = sample[sample["clv_display"].notna()]
+        profit = sample["shadow_profit"].sum()
+        rows.append(
+            {
+                "Tipo CLOSE": close_badge(group),
+                "Jogos": len(sample),
+                "Over %": round(100 * sample["result_over25"].mean(), 1),
+                "Lucro (u)": round(profit, 3),
+                "ROI %": round(100 * profit / len(sample), 2),
+                "CLV+ %": round(
+                    100 * (with_clv["clv_display"] > 0).mean(),
+                    1,
+                ) if len(with_clv) else np.nan,
+                "CLV médio %": round(
+                    100 * with_clv["clv_display"].mean(),
+                    2,
+                ) if len(with_clv) else np.nan,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 try:
     tables = list_tables()
 except Exception as exc:
@@ -389,6 +521,7 @@ page = st.sidebar.radio(
         "🧾 Paper Trades",
         "📅 Próximos Jogos",
         "📈 CLV & Performance",
+        "🧪 Shadow Strategy",
         "⚙️ Estado do Sistema",
     ],
     label_visibility="collapsed",
@@ -528,7 +661,7 @@ elif page == "🧾 Paper Trades":
     only_signals = c2.toggle("Só sinais")
     close_mode = c3.selectbox(
         "Tipo CLOSE",
-        ["Todas", "Pré-jogo", "Pós-jogo", "Sem CLOSE"],
+        ["Todas", "Pré-jogo", "Pós-jogo", "Snapshot API-Football", "Sem CLOSE"],
     )
     sort_mode = c4.selectbox(
         "Ordenar",
@@ -780,6 +913,121 @@ elif page == "📈 CLV & Performance":
             ).mean()
         ),
     )
+
+
+elif page == "🧪 Shadow Strategy":
+    st.subheader("🧪 Shadow Strategy")
+    st.info(
+        "Estas estratégias são apenas acompanhamento. "
+        "Não alteram o threshold real de 55% nem criam novos sinais."
+    )
+
+    summary_shadow = shadow_strategy_summary(paper_view)
+
+    if summary_shadow.empty:
+        st.warning("Ainda não existem jogos resolvidos suficientes para a análise shadow.")
+    else:
+        st.markdown("#### Comparação das regras")
+        st.dataframe(
+            summary_shadow[
+                [
+                    "Estratégia",
+                    "Jogos",
+                    "Over %",
+                    "Odd média",
+                    "Lucro (u)",
+                    "ROI %",
+                    "CLOSE",
+                    "CLV+ %",
+                    "CLV médio %",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        candidate = summary_shadow[
+            summary_shadow["Estratégia"] == "40% + odd ≥1.60"
+        ].iloc[0]
+
+        m = st.columns(4)
+        m[0].metric("Candidata 40% + 1.60", int(candidate["Jogos"]))
+        m[1].metric(
+            "ROI candidata",
+            f"{candidate['ROI %']:+.2f}%"
+            if not pd.isna(candidate["ROI %"])
+            else "—",
+        )
+        m[2].metric(
+            "CLV+ candidata",
+            f"{candidate['CLV+ %']:.1f}%"
+            if not pd.isna(candidate["CLV+ %"])
+            else "—",
+        )
+        m[3].metric(
+            "CLV médio candidata",
+            f"{candidate['CLV médio %']:+.2f}%"
+            if not pd.isna(candidate["CLV médio %"])
+            else "—",
+        )
+
+        st.markdown("#### Qualidade da CLOSE na candidata")
+        quality_table = shadow_by_close_quality(
+            paper_view,
+            threshold=0.40,
+            min_odd=1.60,
+        )
+        if len(quality_table):
+            st.dataframe(
+                quality_table,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.markdown("#### Progresso para validação")
+        candidate_rows = int(candidate["Jogos"])
+        high_quality_rows = len(
+            paper_view[
+                (paper_view["status"] == "RESOLVED")
+                & (paper_view["clv_probability"] >= 0.40)
+                & (paper_view["odd_over25_open"] >= 1.60)
+                & paper_view["close_group"].isin(["Pré-jogo", "Pós-jogo"])
+                & paper_view["clv_display"].notna()
+            ]
+        )
+        pre_rows = len(
+            paper_view[
+                (paper_view["status"] == "RESOLVED")
+                & (paper_view["clv_probability"] >= 0.40)
+                & (paper_view["odd_over25_open"] >= 1.60)
+                & (paper_view["close_group"] == "Pré-jogo")
+                & paper_view["clv_display"].notna()
+            ]
+        )
+
+        p = st.columns(3)
+        p[0].metric("Jogos candidata", f"{candidate_rows}/75")
+        p[1].metric("CLOSE alta qualidade", f"{high_quality_rows}/50")
+        p[2].metric("CLOSE pré-jogo", f"{pre_rows}/30")
+
+        st.progress(min(candidate_rows / 75, 1.0))
+        st.caption(
+            "Meta de validação: 50–75 jogos na candidata, "
+            "com pelo menos 25–30 CLOSE pré-jogo. "
+            "Só depois avaliamos alterar a regra real."
+        )
+
+        st.markdown("#### Últimos jogos da candidata")
+        candidate_games = paper_view[
+            (paper_view["clv_probability"] >= 0.40)
+            & (paper_view["odd_over25_open"] >= 1.60)
+        ].copy()
+
+        st.dataframe(
+            paper_table(candidate_games.head(30)),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 elif page == "⚙️ Estado do Sistema":
