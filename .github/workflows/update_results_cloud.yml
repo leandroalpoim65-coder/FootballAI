@@ -39,6 +39,13 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python update_results_cloud.py
 
+      - name: Resolve stale results with API-Football
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: python api_football_results_fallback_cloud.py
+
       - name: Finalize and backfill closing odds
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
