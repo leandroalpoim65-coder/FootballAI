@@ -1,0 +1,24 @@
+PAST_MISSING_WITH_SPORT_KEY=38
+MISSING id=164 | 2026-08-16T20:30:00+01:00 | Portugal | Sp Braga vs Gil Vicente | soccer_portugal_primeira_liga
+MISSING id=243 | 2026-08-22T19:00:00+01:00 | Netherlands | Nijmegen vs Excelsior | soccer_netherlands_eredivisie
+MISSING id=567 | 2026-09-04T18:00:00+01:00 | Turkey Super Lig | Buyuksehyr vs Galatasaray | soccer_turkey_super_league
+MISSING id=571 | 2026-09-04T19:00:00+01:00 | France Ligue 2 | Laval vs Red Star | soccer_france_ligue_two
+MISSING id=578 | 2026-09-04T20:00:00+01:00 | Spain | Betis vs Real Madrid | soccer_spain_la_liga
+MISSING id=585 | 2026-09-05T12:30:00+01:00 | England Championship | Stoke vs Charlton | soccer_efl_champ
+MISSING id=586 | 2026-09-05T12:30:00+01:00 | England League One | Peterboro vs Sheffield Weds | soccer_england_league1
+MISSING id=587 | 2026-09-05T12:30:00+01:00 | England League One | Wigan vs Stockport | soccer_england_league1
+MISSING id=589 | 2026-09-05T12:30:00+01:00 | England League Two | Salford vs Port Vale | soccer_england_league2
+MISSING id=590 | 2026-09-05T13:00:00+01:00 | France Ligue 2 | Metz vs Rodez | soccer_france_ligue_two
+MISSING id=591 | 2026-09-05T13:00:00+01:00 | France Ligue 2 | Reims vs Guingamp | soccer_france_ligue_two
+MISSING id=594 | 2026-09-05T14:00:00+01:00 | Italy Serie B | Sudtirol vs Catanzaro | soccer_italy_serie_b
+MISSING id=596 | 2026-09-05T14:30:00+01:00 | Germany | Leverkusen vs Union Berlin | soccer_germany_bundesliga
+MISSING id=599 | 2026-09-05T15:00:00+01:00 | Belgium First Division A | Charleroi vs St. Gilloise | soccer_belgium_first_div
+MISSING id=611 | 2026-09-05T15:00:00+01:00 | England League One | Bradford vs Mansfield | soccer_england_league1
+MISSING id=612 | 2026-09-05T15:00:00+01:00 | England League One | Burton vs Cambridge | soccer_england_league1
+MISSING id=613 | 2026-09-05T15:00:00+01:00 | England League One | Doncaster vs Plymouth | soccer_england_league1
+MISSING id=616 | 2026-09-05T15:00:00+01:00 | England League One | Wycombe vs Milton Keynes Dons | soccer_england_league1
+MISSING id=617 | 2026-09-05T15:00:00+01:00 | England League Two | Accrington vs Crawley Town | soccer_england_league2
+MISSING id=618 | 2026-09-05T15:00:00+01:00 | England League Two | Cheltenham vs Grimsby | soccer_england_league2
+PROBE id=687 Guimaraes vs Casa Pia snapshot=2026-09-06T16:55:00+00:00
+HISTORICAL_ERROR=HTTP 401: {"message":"Historical odds are only available on paid usage plans. See usage plans at https://the-odds-api.com","error_code":"HISTORICAL_UNAVAILABLE_ON_FREE_USAGE_PLAN","details_url":"https://the-odds-api.com/liveapi/guides/v4/api-error-codes.html#historical-unavailable-on-free-usage-plan"}
+
