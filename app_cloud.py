@@ -136,6 +136,9 @@ def classify_close(row: pd.Series) -> str:
             return "Pré-jogo"
         return "Snapshot API-Football"
 
+    if "football-data fixtures" in source and "pre-match snapshot" in source:
+        return "Snapshot Football-Data"
+
     if "football-data" in source or "pós-jogo" in source or "pos-jogo" in source:
         return "Pós-jogo"
 
@@ -150,6 +153,7 @@ def close_badge(group: str) -> str:
         "Pré-jogo": "🟢 Pré-jogo",
         "Pós-jogo": "🟠 Pós-jogo",
         "Snapshot API-Football": "🟡 Snapshot API-Football",
+        "Snapshot Football-Data": "🟡 Snapshot Football-Data",
         "Sem CLOSE": "⚪ Sem CLOSE",
     }.get(group, "⚪ Outra")
 
@@ -391,7 +395,10 @@ def shadow_strategy_summary(df: pd.DataFrame) -> pd.DataFrame:
 
         n = len(picked)
         profit = picked["shadow_profit"].sum() if n else np.nan
-        clv_usable = picked[picked["clv_display"].notna()]
+        clv_usable = picked[
+            picked["clv_display"].notna()
+            & picked["close_group"].isin(["Pré-jogo", "Pós-jogo"])
+        ]
 
         rows.append(
             {
@@ -435,12 +442,22 @@ def shadow_by_close_quality(df: pd.DataFrame, threshold: float, min_odd: float) 
     picked["shadow_profit"] = picked.apply(hypothetical_profit, axis=1)
 
     rows = []
-    for group in ["Pré-jogo", "Pós-jogo", "Snapshot API-Football", "Sem CLOSE"]:
+    for group in [
+        "Pré-jogo",
+        "Pós-jogo",
+        "Snapshot API-Football",
+        "Snapshot Football-Data",
+        "Sem CLOSE",
+    ]:
         sample = picked[picked["close_group"] == group]
         if sample.empty:
             continue
 
-        with_clv = sample[sample["clv_display"].notna()]
+        with_clv = (
+            sample[sample["clv_display"].notna()]
+            if group in {"Pré-jogo", "Pós-jogo"}
+            else sample.iloc[0:0]
+        )
         profit = sample["shadow_profit"].sum()
         rows.append(
             {
