@@ -85,6 +85,8 @@ def close_group(row: pd.Series) -> str:
     source = str(row.get("closing_source") or "").casefold()
     if "the odds api" in source:
         return "CLOSE pré-jogo"
+    if "football-data fixtures" in source and "pre-match snapshot" in source:
+        return "Snapshot Football-Data"
     if "football-data" in source:
         return "CLOSE Football-Data"
     if "api-football" in source:
@@ -96,6 +98,7 @@ BADGES = {
     "CLOSE pré-jogo": "🟢 CLOSE pré-jogo",
     "CLOSE Football-Data": "🟠 CLOSE Football-Data",
     "Snapshot API-Football": "🟡 Snapshot API-Football",
+    "Snapshot Football-Data": "🟡 Snapshot Football-Data",
     "Sem CLOSE": "⚪ Sem CLOSE",
     "Outra CLOSE": "⚪ Outra CLOSE",
 }
