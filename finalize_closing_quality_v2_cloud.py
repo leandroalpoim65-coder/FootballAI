@@ -297,8 +297,8 @@ def main() -> None:
                     continue
 
                 observed_at_dt = (
-                    parse_api_datetime(stored.get("first_observed_at"))
-                    or parse_api_datetime(stored.get("current_observed_at"))
+                    parse_api_datetime(stored.get("current_observed_at"))
+                    or parse_api_datetime(stored.get("first_observed_at"))
                     or now
                 )
 
