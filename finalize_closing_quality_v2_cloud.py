@@ -33,11 +33,15 @@ from update_results_cloud import (
     safe_odd,
     season_start_for,
     table_columns,
+    team_names_match,
 )
 
 
 API_FOOTBALL_RECOVERED_SOURCE = (
     "API-Football / recovered latest pre-match snapshot / post-game backfill"
+)
+FOOTBALL_DATA_PREMATCH_RECOVERED_SOURCE = (
+    "Football-Data fixtures / recovered pre-match snapshot"
 )
 API_FOOTBALL_HISTORY_DAYS = 6
 API_FOOTBALL_RECHECK_HOURS = 24
@@ -52,6 +56,18 @@ def is_api_football_live_source(value: object) -> bool:
 def is_api_football_provisional_source(value: object) -> bool:
     source = str(value or "").casefold()
     return "api-football" in source and not is_api_football_live_source(source)
+
+
+def is_football_data_prematch_source(value: object) -> bool:
+    source = str(value or "").casefold()
+    return "football-data fixtures" in source and "pre-match snapshot" in source
+
+
+def is_provisional_source(value: object) -> bool:
+    return (
+        is_api_football_provisional_source(value)
+        or is_football_data_prematch_source(value)
+    )
 
 
 def is_final_prospective_source(value: object) -> bool:
@@ -200,6 +216,125 @@ def main() -> None:
         )
 
         # ====================================================
+        # STEP 0 — Recover stored pre-match snapshot for past gaps
+        # ====================================================
+        prematch_recovered = 0
+        existing_tables = {
+            item[0]
+            for item in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+
+        if "upcoming_matches" in existing_tables:
+            upcoming_rows = fetch_dicts(
+                connection,
+                """
+                SELECT *
+                FROM upcoming_matches
+                ORDER BY date, time, fixture_key
+                """,
+            )
+
+            for row in rows:
+                if str(row.get("status") or "OPEN").strip().upper() == "VOID":
+                    continue
+                if has_valid_close(row):
+                    continue
+
+                fixture_datetime = parse_fixture_datetime(
+                    row.get(fixture_date_column),
+                    row.get(fixture_time_column) if fixture_time_column else None,
+                )
+                if fixture_datetime is None or fixture_datetime >= now:
+                    continue
+
+                league = normalize_league(row.get("league"))
+                if not isinstance(league, str):
+                    continue
+
+                fixture_date_text = str(
+                    row.get(fixture_date_column) or ""
+                )[:10]
+
+                matches: list[dict] = []
+                for stored in upcoming_rows:
+                    if str(stored.get("date") or "")[:10] != fixture_date_text:
+                        continue
+
+                    stored_league = normalize_league(stored.get("league"))
+                    if stored_league != league:
+                        continue
+
+                    if not team_names_match(
+                        league,
+                        stored.get("home_team"),
+                        row.get("home_team"),
+                    ):
+                        continue
+
+                    if not team_names_match(
+                        league,
+                        stored.get("away_team"),
+                        row.get("away_team"),
+                    ):
+                        continue
+
+                    over = safe_odd(stored.get("odd_over25_current"))
+                    under = safe_odd(stored.get("odd_under25_current"))
+                    if over is None or under is None:
+                        continue
+
+                    matches.append(stored)
+
+                if len(matches) != 1:
+                    continue
+
+                stored = matches[0]
+                over = safe_odd(stored.get("odd_over25_current"))
+                under = safe_odd(stored.get("odd_under25_current"))
+                if over is None or under is None:
+                    continue
+
+                observed_at_dt = (
+                    parse_api_datetime(stored.get("first_observed_at"))
+                    or parse_api_datetime(stored.get("current_observed_at"))
+                    or now
+                )
+
+                record_observation(
+                    connection,
+                    row,
+                    FOOTBALL_DATA_PREMATCH_RECOVERED_SOURCE,
+                    "PROVISIONAL_RECOVERED_PREMATCH",
+                    observed_at_dt,
+                    None,
+                    over,
+                    under,
+                )
+
+                update_reference_close(
+                    connection,
+                    table,
+                    row,
+                    over,
+                    under,
+                    FOOTBALL_DATA_PREMATCH_RECOVERED_SOURCE,
+                    observed_at_dt.isoformat(timespec="seconds"),
+                    None,
+                )
+                prematch_recovered += 1
+
+                print(
+                    f"🟡 Snapshot pré-jogo recuperada "
+                    f"{fixture_date_text} | "
+                    f"{row.get('home_team')} vs {row.get('away_team')} "
+                    f"| Over {over:.3f}"
+                )
+
+            connection.commit()
+
+        # ====================================================
         # STEP 1 — Football-Data final closing odds
         # ====================================================
         fd_candidates: list[dict] = []
@@ -212,7 +347,7 @@ def main() -> None:
                 continue
 
             needs_close = not has_valid_close(row)
-            provisional = is_api_football_provisional_source(source)
+            provisional = is_provisional_source(source)
             if not needs_close and not provisional:
                 continue
 
@@ -533,6 +668,7 @@ def main() -> None:
         print("==========================================")
         print(" RESUMO")
         print("==========================================")
+        print(f"Snapshots pré-jogo recuperadas      : {prematch_recovered}")
         print(f"Football-Data preenchidas           : {fd_filled}")
         print(
             f"Football-Data substituiu provisórias: {fd_replaced_provisional}"
