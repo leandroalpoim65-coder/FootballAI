@@ -1,0 +1,31 @@
+name: Backfill Pre-match Snapshots
+on:
+  push:
+    paths:
+      - "backfill_prematch_snapshots.py"
+      - ".github/workflows/backfill_prematch_snapshots.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Backfill
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python backfill_prematch_snapshots.py > backfill_prematch_snapshots.txt 2>&1
+      - name: Publish
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backfill_prematch_snapshots.txt
+          git commit -m "Record pre-match snapshot backfill" || true
+          git push
