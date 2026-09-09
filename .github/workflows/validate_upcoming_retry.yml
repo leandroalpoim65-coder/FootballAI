@@ -20,4 +20,13 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python upcoming_football_data_cloud.py
+        run: |
+          set +e
+          python upcoming_football_data_cloud.py
+          code=$?
+          set -e
+          if [ "$code" -eq 75 ]; then
+            echo "::warning::Fonte indisponível tratada corretamente; Turso preservada."
+            exit 0
+          fi
+          exit "$code"
