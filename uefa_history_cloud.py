@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import libsql
 
@@ -12,6 +14,7 @@ from closing_odds_v3_cloud import api_football_get_json, parse_api_datetime
 TABLE = "uefa_matches"
 RUNS_TABLE = "uefa_sync_runs"
 DEFAULT_SEASONS_BACK = 5
+APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
 
 
 def now_iso() -> str:
@@ -71,7 +74,7 @@ def ensure_tables(connection) -> None:
 
 
 def current_season_start() -> int:
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(APP_TIMEZONE).date()
     return today.year if today.month >= 7 else today.year - 1
 
 
@@ -129,7 +132,7 @@ def completed_match(item: dict, expected_league_id: int, expected_league: str) -
     except (TypeError, ValueError):
         season = str(season_value or "")
 
-    local = kickoff.astimezone()
+    local = kickoff.astimezone(APP_TIMEZONE)
     return {
         "fixture_id": fixture_id,
         "date": local.strftime("%Y-%m-%d"),
@@ -223,7 +226,6 @@ def main() -> None:
                 connection.commit()
                 print(f"{league_name:24s} {season}: {saved_here} jogos concluídos")
 
-        import json
         connection.execute(
             f"INSERT INTO {RUNS_TABLE} (synced_at,seasons_json,competitions,requests_used,rows_seen,rows_saved,errors) VALUES (?,?,?,?,?,?,?)",
             (synced_at, json.dumps(seasons), len(UEFA_COMPETITIONS), requests_used, rows_seen, rows_saved, errors),
