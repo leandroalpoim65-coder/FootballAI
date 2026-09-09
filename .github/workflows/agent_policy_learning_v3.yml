@@ -2,6 +2,15 @@ name: FootballAI Autonomous Policy Learner V3
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "agent/**"
+      - "footballai_agent_cloud.py"
+      - "agent_policy_learner_cloud.py"
+      - "tests/test_decision_engine.py"
+      - "tests/test_policy_store.py"
+      - "tests/test_policy_learning.py"
+      - ".github/workflows/agent_policy_learning_v3.yml"
   schedule:
     # Performance Monitor corre às 01:05/13:05 UTC.
     # O learner usa depois os resultados já consolidados.
@@ -36,6 +45,7 @@ jobs:
           python -m unittest discover -s tests -p "test_policy_learning.py"
 
       - name: Run autonomous policy learner
+        if: github.event_name != 'pull_request'
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
