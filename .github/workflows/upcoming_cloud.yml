@@ -32,6 +32,12 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          API_FOOTBALL_FALLBACK_DAYS: "3"
+          API_FOOTBALL_FALLBACK_MAX_REQUESTS: "16"
+          ODDS_API_UPCOMING_RESERVE: "100"
+          ODDS_API_UPCOMING_MAX_CALLS: "18"
         run: |
           set +e
           python upcoming_football_data_cloud.py
