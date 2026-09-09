@@ -119,7 +119,7 @@ def ensure_policy_table(connection) -> None:
 
         connection.execute(
             f"""
-            UPDATE ${POLICY_TABLE}
+            UPDATE {POLICY_TABLE}
             SET
                 status = 'ACTIVE',
                 activated_at = ?,
@@ -127,7 +127,7 @@ def ensure_policy_table(connection) -> None:
             WHERE policy_version = ?
               AND NOT EXISTS (
                     SELECT 1
-                    FROM ${POLICY_TABLE}
+                    FROM {POLICY_TABLE}
                     WHERE status = 'ACTIVE'
                       AND policy_version <> ?
               )
