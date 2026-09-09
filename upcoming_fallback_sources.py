@@ -332,6 +332,7 @@ def odds_api_quota(api_key: str):
 def fetch_odds_api_fallback(
     today,
     api_key: str,
+    horizon_days: int = 3,
     reserve_credits: int = 100,
     max_calls: int = 18,
 ) -> tuple[list[dict], dict]:
@@ -359,6 +360,7 @@ def fetch_odds_api_fallback(
     calls = 0
     last_remaining = remaining
     now = datetime.now(APP_TIMEZONE)
+    max_date = today + timedelta(days=max(1, horizon_days) - 1)
 
     for league in ODDS_API_PRIORITY:
         if calls >= max_calls:
@@ -400,7 +402,7 @@ def fetch_odds_api_fallback(
             kickoff = parse_api_datetime(event.get("commence_time"))
             if kickoff is None or kickoff < now:
                 continue
-            if kickoff.date() < today:
+            if kickoff.date() < today or kickoff.date() > max_date:
                 continue
 
             over, under = extract_odds_api_totals(event)
@@ -473,6 +475,7 @@ def fetch_emergency_upcoming(today):
     observations, odds_info = fetch_odds_api_fallback(
         today,
         odds_api_key,
+        horizon_days=api_horizon,
         reserve_credits=odds_reserve,
         max_calls=odds_calls,
     )
