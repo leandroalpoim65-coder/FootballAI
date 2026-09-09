@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
+      - name: Run decision engine unit tests
+        run: python -m unittest discover -s tests -p "test_decision_engine.py"
+
       - name: Run autonomous agent in shadow mode
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
