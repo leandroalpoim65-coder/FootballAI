@@ -1,0 +1,42 @@
+name: FootballAI Autonomous Policy Learner V3
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Performance Monitor corre às 01:05/13:05 UTC.
+    # O learner usa depois os resultados já consolidados.
+    - cron: "15 1,13 * * *"
+
+concurrency:
+  group: footballai-autonomous-policy-learner-v3
+  cancel-in-progress: false
+
+jobs:
+  learn-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run autonomous agent tests
+        run: |
+          python -m unittest discover -s tests -p "test_decision_engine.py"
+          python -m unittest discover -s tests -p "test_policy_store.py"
+          python -m unittest discover -s tests -p "test_policy_learning.py"
+
+      - name: Run autonomous policy learner
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python agent_policy_learner_cloud.py
