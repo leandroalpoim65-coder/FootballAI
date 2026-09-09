@@ -1,0 +1,1 @@
+"""FootballAI autonomous agent package."""
