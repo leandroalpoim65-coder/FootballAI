@@ -1,4 +1,4 @@
-name: Validate Paper Trade After Fallback
+name: Validate Paper Trade After Fallback Final
 
 on:
   push:
