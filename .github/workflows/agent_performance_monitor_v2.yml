@@ -2,6 +2,11 @@ name: FootballAI Agent Performance Monitor V2
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/agent_performance_monitor_v2.yml"
   schedule:
     # Corre depois do Results Cloud (:25) e do agente (:45 em 00/12 UTC).
     - cron: "5 1,13 * * *"
