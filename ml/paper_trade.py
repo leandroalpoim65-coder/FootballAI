@@ -219,6 +219,17 @@ TEAM_ALIASES = {
 
     # Espanha
     ("Spain", "dep. a coruna"): "La Coruna",
+    ("Spain", "athletic bilbao"): "Ath Bilbao",
+    ("Spain", "athletic club"): "Ath Bilbao",
+
+    # Inglaterra - League One
+    ("England League One", "peterborough united"): "Peterboro",
+    ("England League One", "sheffield wednesday"): "Sheffield Weds",
+    ("England League One", "milton keynes dons"): "Milton Keynes Dons",
+
+    # França - Ligue 2
+    ("France Ligue 2", "stade lavallois"): "Laval",
+    ("France Ligue 2", "stade laval"): "Laval",
 }
 
 
