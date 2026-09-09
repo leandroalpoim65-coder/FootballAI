@@ -35,6 +35,53 @@ class PolicyStoreTests(unittest.TestCase):
             DEFAULT_POLICY.version,
         )
 
+    def test_recovers_default_if_no_policy_is_active(self):
+        ensure_policy_table(
+            self.connection
+        )
+
+        self.connection.execute(
+            """
+            UPDATE agent_policies
+            SET status = 'RETIRED',
+                retired_at = '2026-09-09T00:00:00+00:00'
+            WHERE policy_version = ?
+            """,
+            (
+                DEFAULT_POLICY.version,
+            ),
+        )
+        self.connection.commit()
+
+        ensure_policy_table(
+            self.connection
+        )
+
+        active = load_active_policy(
+            self.connection
+        )
+
+        self.assertEqual(
+            active.version,
+            DEFAULT_POLICY.version,
+        )
+
+        status = self.connection.execute(
+            """
+            SELECT status
+            FROM agent_policies
+            WHERE policy_version = ?
+            """,
+            (
+                DEFAULT_POLICY.version,
+            ),
+        ).fetchone()[0]
+
+        self.assertEqual(
+            status,
+            "ACTIVE",
+        )
+
     def test_activation_retires_previous_policy(self):
         ensure_policy_table(
             self.connection
