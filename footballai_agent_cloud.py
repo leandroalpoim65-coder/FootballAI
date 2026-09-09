@@ -12,10 +12,13 @@ import libsql
 import pandas as pd
 
 from agent.decision_engine import (
-    POLICY_VERSION,
     PerformanceStats,
     build_stats,
     evaluate_candidate,
+)
+from agent.policy_store import (
+    ensure_policy_table,
+    load_active_policy,
 )
 
 
@@ -332,6 +335,7 @@ def predict_sports_probability(
 def insert_decision(
     connection,
     row: dict[str, Any],
+    policy_version: str,
     sports_probability: float,
     global_stats: PerformanceStats,
     league_stats: PerformanceStats,
@@ -388,7 +392,7 @@ def insert_decision(
         (
             int(row["id"]),
             evaluated_at,
-            POLICY_VERSION,
+            policy_version,
             str(row["fixture_date"]),
             row.get("fixture_time"),
             str(row["league"]),
@@ -484,6 +488,9 @@ def main() -> None:
             )
 
         ensure_agent_tables(connection)
+        ensure_policy_table(connection)
+
+        active_policy = load_active_policy(connection)
 
         resolved_rows = load_resolved_signal_rows(connection)
         global_stats, per_league = build_performance_context(
@@ -493,6 +500,13 @@ def main() -> None:
         open_trades = load_open_trades(connection)
         evaluated_ids = existing_decision_ids(connection)
 
+        print(f"Política ativa             : {active_policy.version}")
+        print(
+            f"Thresholds                 : "
+            f"CLV {active_policy.min_clv_probability:.1%} | "
+            f"EV {active_policy.min_expected_value:.1%} | "
+            f"Edge {active_policy.min_edge_market:.1%}"
+        )
         print(f"Trades OPEN vistos         : {len(open_trades)}")
         print(f"Sinais resolvidos shadow  : {global_stats.sample}")
 
@@ -539,6 +553,7 @@ def main() -> None:
                     sports_probability=sports_probability,
                     global_stats=global_stats,
                     league_stats=league_stats,
+                    policy=active_policy,
                 )
 
                 evaluated_at = (
@@ -550,6 +565,7 @@ def main() -> None:
                 insert_decision(
                     connection=connection,
                     row=row,
+                    policy_version=active_policy.version,
                     sports_probability=sports_probability,
                     global_stats=global_stats,
                     league_stats=league_stats,
@@ -620,7 +636,7 @@ def main() -> None:
             (
                 started_at,
                 finished_at,
-                POLICY_VERSION,
+                active_policy.version,
                 len(open_trades),
                 inserted,
                 already,
@@ -660,8 +676,9 @@ def main() -> None:
 
         print()
         print(
-            "Nota: V1 é apenas shadow. "
-            "Não executa apostas nem altera thresholds automaticamente."
+            "Nota: o agente continua em shadow. "
+            "O learner pode promover thresholds apenas após validação "
+            "temporal; não executa apostas reais."
         )
 
     finally:
