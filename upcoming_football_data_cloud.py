@@ -18,6 +18,12 @@ from ml.paper_trade import normalize_league, normalize_team
 APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
 FOOTBALL_DATA_URL = "https://www.football-data.co.uk/fixtures.csv"
 TABLE_NAME = "upcoming_matches"
+TEMPORARY_SOURCE_EXIT_CODE = 75
+
+
+class FootballDataUnavailable(RuntimeError):
+    """Falha temporária da fonte externa, sem alterar dados existentes."""
+
 
 DIVISION_LEAGUE_MAP = {
     "B1": "Belgium First Division A",
@@ -125,8 +131,14 @@ def http_get_bytes(
             except Exception:
                 detail = ""
 
-            last_error = RuntimeError(
-                f"HTTP {error.code}: {detail[:300]}"
+            last_error = (
+                FootballDataUnavailable(
+                    f"HTTP {error.code}: {detail[:300]}"
+                )
+                if error.code in retryable_http
+                else RuntimeError(
+                    f"HTTP {error.code}: {detail[:300]}"
+                )
             )
 
             if error.code not in retryable_http or attempt >= attempts:
@@ -141,7 +153,7 @@ def http_get_bytes(
             time.sleep(delay)
 
         except (URLError, TimeoutError) as error:
-            last_error = RuntimeError(
+            last_error = FootballDataUnavailable(
                 f"Erro temporário de ligação: "
                 f"{getattr(error, 'reason', error)}"
             )
@@ -456,7 +468,17 @@ def main() -> None:
     connection = connect_turso()
     try:
         ensure_table(connection)
-        observations, info = fetch_observations(today)
+        try:
+            observations, info = fetch_observations(today)
+        except FootballDataUnavailable as error:
+            print()
+            print("==========================================")
+            print(" FONTE TEMPORARIAMENTE INDISPONÍVEL")
+            print("==========================================")
+            print(f"⚠ {error}")
+            print("✅ upcoming_matches ficou intacta na Turso.")
+            print("⏭ Paper Trade/Telegram devem ser ignorados nesta execução.")
+            raise SystemExit(TEMPORARY_SOURCE_EXIT_CODE)
 
         print("Fonte                     : Football-Data fixtures")
         print("The Odds API              : NÃO usada neste workflow")
