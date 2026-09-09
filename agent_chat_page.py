@@ -6,7 +6,13 @@ import libsql
 import pandas as pd
 import streamlit as st
 
-from agent.chat_assistant import answer_question, agent_snapshot
+from agent.chat_assistant import (
+    agent_snapshot,
+    answer_question,
+    pct,
+    safe_int,
+    safe_text,
+)
 
 
 st.set_page_config(
@@ -134,25 +140,16 @@ st.caption(
 )
 
 cols = st.columns(4)
-cols[0].metric("Política ativa", str(policy.get("policy_version") or "—"))
-cols[1].metric("Decisões", int(snapshot.get("decision_total") or 0))
-cols[2].metric("QUALIFIED", int(counts.get("QUALIFIED_SHADOW", 0)))
-cols[3].metric("Learner", str(learner.get("decision") or "—"))
+cols[0].metric("Política ativa", safe_text(policy.get("policy_version")))
+cols[1].metric("Decisões", safe_int(snapshot.get("decision_total")))
+cols[2].metric("QUALIFIED", safe_int(counts.get("QUALIFIED_SHADOW")))
+cols[3].metric("Learner", safe_text(learner.get("decision")))
 
 with st.expander("Estado técnico do agente", expanded=False):
     c = st.columns(3)
-    c[0].metric(
-        "CLV mínimo",
-        f"{float(policy.get('min_clv_probability', 0))*100:.1f}%" if policy else "—",
-    )
-    c[1].metric(
-        "EV mínimo",
-        f"{float(policy.get('min_expected_value', 0))*100:.1f}%" if policy else "—",
-    )
-    c[2].metric(
-        "Edge mínimo",
-        f"{float(policy.get('min_edge_market', 0))*100:.1f}%" if policy else "—",
-    )
+    c[0].metric("CLV mínimo", pct(policy.get("min_clv_probability")) if policy else "—")
+    c[1].metric("EV mínimo", pct(policy.get("min_expected_value")) if policy else "—")
+    c[2].metric("Edge mínimo", pct(policy.get("min_edge_market")) if policy else "—")
     st.caption(
         "O chat é de leitura/análise. Não altera thresholds nem políticas por uma mensagem. "
         "As promoções continuam a passar pelo Policy Learner e pela validação temporal."
@@ -177,8 +174,8 @@ with st.expander("🔎 O que o agente está a examinar", expanded=False):
                 if name in tables
             ],
             "Decisões carregadas": int(len(decisions)),
-            "Política ativa": str(policy.get("policy_version") or "—"),
-            "Estado learner": str(learner.get("decision") or "—"),
+            "Política ativa": safe_text(policy.get("policy_version")),
+            "Estado learner": safe_text(learner.get("decision")),
         }
     )
 
@@ -240,16 +237,25 @@ if question:
     with st.chat_message("user"):
         st.markdown(question)
 
-    with st.chat_message("assistant"):
-        with st.spinner("A analisar os dados do projeto…"):
-            answer = answer_question(
-                question,
-                decisions,
-                policies,
-                learning,
-                performance,
-            )
-        st.markdown(answer)
+    try:
+        with st.chat_message("assistant"):
+            with st.spinner("A analisar os dados do projeto…"):
+                answer = answer_question(
+                    question,
+                    decisions,
+                    policies,
+                    learning,
+                    performance,
+                )
+            st.markdown(answer)
+    except Exception as exc:
+        answer = (
+            "Não consegui responder a esta pergunta por um erro interno de dados. "
+            "A página continua ativa; o detalhe técnico aparece abaixo."
+        )
+        with st.chat_message("assistant"):
+            st.error(answer)
+            st.code(f"{type(exc).__name__}: {exc}")
 
     st.session_state.agent_chat_messages.append(
         {"role": "assistant", "content": answer}
