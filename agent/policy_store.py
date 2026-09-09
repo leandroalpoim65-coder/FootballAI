@@ -117,6 +117,28 @@ def ensure_policy_table(connection) -> None:
             ),
         )
 
+        connection.execute(
+            f"""
+            UPDATE ${POLICY_TABLE}
+            SET
+                status = 'ACTIVE',
+                activated_at = ?,
+                retired_at = NULL
+            WHERE policy_version = ?
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM ${POLICY_TABLE}
+                    WHERE status = 'ACTIVE'
+                      AND policy_version <> ?
+              )
+            """,
+            (
+                now,
+                DEFAULT_POLICY.version,
+                DEFAULT_POLICY.version,
+            ),
+        )
+
         connection.commit()
 
 
