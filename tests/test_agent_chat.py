@@ -129,7 +129,7 @@ class AgentChatTests(unittest.TestCase):
         )
 
         self.assertIn("0 jogos resolvidos", learning_answer)
-        self.assertIn("0 decisões resolvidas", performance_answer)
+        self.assertIn("**0** decisões resolvidas", performance_answer)
         self.assertIn("—", performance_answer)
 
 
