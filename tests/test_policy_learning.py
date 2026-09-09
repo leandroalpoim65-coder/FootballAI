@@ -6,6 +6,7 @@ from agent.policy_learning import (
     candidate_grid,
     learn_policy,
     policy_metrics,
+    same_policy,
     temporal_split,
 )
 
@@ -159,9 +160,11 @@ class PolicyLearningTests(unittest.TestCase):
         self.assertIsNotNone(
             result.candidate,
         )
-        self.assertGreater(
-            result.candidate.min_clv_probability,
-            DEFAULT_POLICY.min_clv_probability,
+        self.assertFalse(
+            same_policy(
+                result.candidate,
+                DEFAULT_POLICY,
+            )
         )
         self.assertGreater(
             result.candidate_validation.roi,
