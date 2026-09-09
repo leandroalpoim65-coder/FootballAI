@@ -158,6 +158,64 @@ with st.expander("Estado técnico do agente", expanded=False):
         "As promoções continuam a passar pelo Policy Learner e pela validação temporal."
     )
 
+with st.expander("🔎 O que o agente está a examinar", expanded=False):
+    st.caption(
+        "Isto mostra o rasto auditável do agente: fontes consultadas, política ativa, "
+        "métricas e motivos guardados. Não expõe raciocínio interno privado."
+    )
+    st.write(
+        {
+            "Tabelas consultadas": [
+                name
+                for name in (
+                    "agent_decisions",
+                    "paper_trades",
+                    "agent_policies",
+                    "agent_learning_runs",
+                    "agent_performance_runs",
+                )
+                if name in tables
+            ],
+            "Decisões carregadas": int(len(decisions)),
+            "Política ativa": str(policy.get("policy_version") or "—"),
+            "Estado learner": str(learner.get("decision") or "—"),
+        }
+    )
+
+    if not decisions.empty:
+        cols_to_show = [
+            name
+            for name in (
+                "evaluated_at",
+                "fixture_date",
+                "league",
+                "home_team",
+                "away_team",
+                "decision",
+                "tier",
+                "policy_version",
+                "odd_over25_open",
+                "clv_probability",
+                "sports_probability",
+                "expected_value",
+                "sports_edge_market",
+                "reasons_json",
+                "status",
+                "result_over25",
+                "clv",
+                "closing_source",
+            )
+            if name in decisions.columns
+        ]
+        st.markdown("#### Últimas decisões examinadas")
+        st.dataframe(
+            decisions[cols_to_show].head(25),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("Ainda não existem decisões do agente para inspecionar.")
+
 if "agent_chat_messages" not in st.session_state:
     st.session_state.agent_chat_messages = [
         {
