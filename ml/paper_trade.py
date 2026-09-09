@@ -165,6 +165,9 @@ TEAM_ALIASES = {
     ("Belgium First Division A", "standard liege"): "Standard",
     ("Belgium First Division A", "raal la louvière"): "RAAL La Louviere",
     ("Belgium First Division A", "raal la louviere"): "RAAL La Louviere",
+    ("Belgium First Division A", "union saint-gilloise"): "St. Gilloise",
+    ("Belgium First Division A", "union st gilloise"): "St. Gilloise",
+    ("Belgium First Division A", "royale union saint-gilloise"): "St. Gilloise",
 
     # Inglaterra - Premier League
     ("England", "brighton and hove albion"): "Brighton",
@@ -221,6 +224,8 @@ TEAM_ALIASES = {
     ("Spain", "dep. a coruna"): "La Coruna",
     ("Spain", "athletic bilbao"): "Ath Bilbao",
     ("Spain", "athletic club"): "Ath Bilbao",
+    ("Spain", "real racing club de santander"): "Santander",
+    ("Spain", "racing santander"): "Santander",
 
     # Inglaterra - League One
     ("England League One", "peterborough united"): "Peterboro",
@@ -230,6 +235,17 @@ TEAM_ALIASES = {
     # França - Ligue 2
     ("France Ligue 2", "stade lavallois"): "Laval",
     ("France Ligue 2", "stade laval"): "Laval",
+
+    # Espanha - Segunda Division
+    ("Spain Segunda Division", "sporting gijón"): "Sp Gijon",
+    ("Spain Segunda Division", "sporting gijon"): "Sp Gijon",
+    ("Spain Segunda Division", "real sporting de gijon"): "Sp Gijon",
+
+    # Portugal
+    ("Portugal", "vitória sc"): "Guimaraes",
+    ("Portugal", "vitoria sc"): "Guimaraes",
+    ("Portugal", "vitória guimarães"): "Guimaraes",
+    ("Portugal", "vitoria guimaraes"): "Guimaraes",
 }
 
 
