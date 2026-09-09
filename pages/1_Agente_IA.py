@@ -41,6 +41,15 @@ def safe_pct(value: Any) -> str:
         return "—"
 
 
+def safe_num(value: Any, digits: int = 2) -> str:
+    try:
+        if value is None or pd.isna(value):
+            return "—"
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def setting(name: str) -> str:
     try:
         value = st.secrets[name]
@@ -80,6 +89,7 @@ def load_agent_data(tables: set[str]):
     policies = pd.DataFrame()
     learning = pd.DataFrame()
     performance = pd.DataFrame()
+    memory = pd.DataFrame()
 
     if "agent_decisions" in tables:
         if "paper_trades" in tables:
@@ -110,7 +120,10 @@ def load_agent_data(tables: set[str]):
     if "agent_performance_runs" in tables:
         performance = query("SELECT * FROM agent_performance_runs ORDER BY id DESC LIMIT 1")
 
-    return decisions, policies, learning, performance
+    if "agent_memory_runs" in tables:
+        memory = query("SELECT * FROM agent_memory_runs ORDER BY id DESC LIMIT 1")
+
+    return decisions, policies, learning, performance, memory
 
 
 st.title("🤖 Agente IA · FootballAI")
@@ -118,7 +131,7 @@ st.caption("Chat de análise ligado às decisões congeladas e aos dados guardad
 
 try:
     tables = table_names()
-    decisions, policies, learning, performance = load_agent_data(tables)
+    decisions, policies, learning, performance, memory = load_agent_data(tables)
     snapshot = agent_snapshot(decisions, policies, learning, performance)
 except Exception as exc:
     st.error("Não foi possível carregar os dados do agente.")
@@ -128,12 +141,31 @@ except Exception as exc:
 policy = snapshot.get("policy") if isinstance(snapshot.get("policy"), dict) else {}
 learner = snapshot.get("learner") if isinstance(snapshot.get("learner"), dict) else {}
 counts = snapshot.get("counts") if isinstance(snapshot.get("counts"), dict) else {}
+memory_row = memory.iloc[0].to_dict() if not memory.empty else {}
 
 cols = st.columns(4)
 cols[0].metric("Política ativa", safe_text(policy.get("policy_version")))
 cols[1].metric("Decisões", safe_int(snapshot.get("decision_total")))
 cols[2].metric("QUALIFIED", safe_int(counts.get("QUALIFIED_SHADOW")))
 cols[3].metric("Learner", safe_text(learner.get("decision")))
+
+with st.expander("🧠 Memória V5", expanded=True):
+    if not memory_row:
+        st.info("A memória V5 ainda não teve uma execução cloud. O primeiro run cria este resumo.")
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Histórico", safe_int(memory_row.get("historical_rows")))
+        m2.metric("Resolvidos", safe_int(memory_row.get("resolved_rows")))
+        m3.metric("OPEN sem label", safe_int(memory_row.get("open_rows")))
+        m4.metric("Estado", safe_text(memory_row.get("state")))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("ROI resolvido", safe_pct(memory_row.get("resolved_roi")))
+        c2.metric("Hit rate resolvido", safe_pct(memory_row.get("resolved_hit_rate")))
+        c3.metric("Drift score", safe_num(memory_row.get("drift_score")))
+        st.caption(
+            "Histórico = contexto desportivo. Resolvidos = aprendizagem supervisionada. "
+            "OPEN = padrões/drift apenas; nunca são tratados como resultado real nem promovem uma política sozinhos."
+        )
 
 with st.expander("Estado técnico", expanded=False):
     c1, c2, c3 = st.columns(3)
@@ -177,17 +209,30 @@ if question:
     with st.chat_message("user"):
         st.markdown(question_text)
 
-    try:
-        answer = answer_question(question_text, decisions, policies, learning, performance)
-        answer = safe_text(answer, "Não consegui gerar uma resposta.")
-    except Exception as exc:
-        answer = "O chat encontrou um erro ao analisar esta pergunta."
-        with st.chat_message("assistant"):
-            st.error(answer)
-            st.exception(exc)
+    if any(term in question_text.casefold() for term in ("memoria", "memory", "open", "drift", "base")) and memory_row:
+        answer = (
+            f"A memória V5 está em **{safe_text(memory_row.get('state'))}**: "
+            f"**{safe_int(memory_row.get('historical_rows'))}** jogos históricos de contexto, "
+            f"**{safe_int(memory_row.get('resolved_rows'))}** decisões resolvidas com label real e "
+            f"**{safe_int(memory_row.get('open_rows'))}** jogos OPEN sem label. "
+            f"ROI nos resolvidos: **{safe_pct(memory_row.get('resolved_roi'))}**; "
+            f"drift score atual: **{safe_num(memory_row.get('drift_score'))}**. "
+            "Os OPEN ajudam a detetar padrões e drift, mas não contam como vitória/derrota."
+        )
     else:
-        with st.chat_message("assistant"):
-            st.markdown(answer)
+        try:
+            answer = answer_question(question_text, decisions, policies, learning, performance)
+            answer = safe_text(answer, "Não consegui gerar uma resposta.")
+        except Exception as exc:
+            answer = "O chat encontrou um erro ao analisar esta pergunta."
+            with st.chat_message("assistant"):
+                st.error(answer)
+                st.exception(exc)
+        else:
+            pass
+
+    with st.chat_message("assistant"):
+        st.markdown(answer)
 
     st.session_state.agent_chat_messages_v2.append({"role": "assistant", "content": answer})
 
