@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import difflib
 import json
 import os
+import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -396,6 +399,118 @@ def valid_odd(value) -> float | None:
     return odd
 
 
+def simplify_team_name(value: object) -> str:
+    """
+    Simplificação usada apenas para resolver nomes entre fornecedores.
+
+    A resolução continua limitada à mesma liga e exige correspondência
+    única/forte para evitar ligar equipas diferentes por engano.
+    """
+    text = "" if value is None else str(value)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(
+        char for char in text
+        if not unicodedata.combining(char)
+    )
+    text = text.casefold().replace("&", " and ")
+    text = re.sub(
+        r"\b(fc|afc|cf|sc|sv|fk|ac|ksv|jk|ae|pae|club)\b",
+        " ",
+        text,
+    )
+    text = re.sub(r"\b\d+\b", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def resolve_team_to_history(
+    history: pd.DataFrame,
+    league: str,
+    team: str,
+) -> str:
+    """
+    Resolve um nome de fornecedor para o nome existente no histórico.
+
+    Ordem:
+    1) exacto;
+    2) simplificação exacta;
+    3) contenção inequívoca de tokens;
+    4) fuzzy muito forte com margem para o segundo candidato.
+    """
+    available = (
+        history.loc[
+            history["league"] == league,
+            "team",
+        ]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+
+    if not available or team in available:
+        return team
+
+    target = simplify_team_name(team)
+    if not target:
+        return team
+
+    simplified: dict[str, list[str]] = {}
+    for candidate in available:
+        key = simplify_team_name(candidate)
+        if key:
+            simplified.setdefault(key, []).append(candidate)
+
+    exact = simplified.get(target, [])
+    if len(exact) == 1:
+        return exact[0]
+
+    target_tokens = set(target.split())
+    contained: list[str] = []
+    for candidate in available:
+        key = simplify_team_name(candidate)
+        if not key:
+            continue
+        tokens = set(key.split())
+        if not tokens:
+            continue
+
+        # Exige pelo menos um token distintivo com 4+ caracteres.
+        overlap = target_tokens & tokens
+        if not any(len(token) >= 4 for token in overlap):
+            continue
+
+        if tokens.issubset(target_tokens) or target_tokens.issubset(tokens):
+            contained.append(candidate)
+
+    if len(contained) == 1:
+        return contained[0]
+
+    scored = sorted(
+        (
+            difflib.SequenceMatcher(
+                None,
+                target,
+                simplify_team_name(candidate),
+            ).ratio(),
+            candidate,
+        )
+        for candidate in available
+    )
+    scored.reverse()
+
+    if not scored:
+        return team
+
+    best_score, best_name = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0.0
+
+    if best_score >= 0.86 and best_score - second_score >= 0.08:
+        return best_name
+
+    return team
+
+
 # ============================================================
 # MODELO
 # ============================================================
@@ -557,6 +672,7 @@ def main() -> None:
         already_exists = 0
         skipped = 0
         signals = 0
+        team_names_resolved = 0
 
         skipped_examples: list[str] = []
         signal_examples: list[str] = []
@@ -604,6 +720,26 @@ def main() -> None:
                     league,
                     row.get("away_team"),
                 )
+
+                if home_team is not None:
+                    resolved_home = resolve_team_to_history(
+                        team_history,
+                        str(league),
+                        str(home_team),
+                    )
+                    if resolved_home != home_team:
+                        team_names_resolved += 1
+                        home_team = resolved_home
+
+                if away_team is not None:
+                    resolved_away = resolve_team_to_history(
+                        team_history,
+                        str(league),
+                        str(away_team),
+                    )
+                    if resolved_away != away_team:
+                        team_names_resolved += 1
+                        away_team = resolved_away
 
                 if home_team is None:
                     raise ValueError(
@@ -870,6 +1006,7 @@ def main() -> None:
         print(f"Novos registos           : {inserted}")
         print(f"Já existentes            : {already_exists}")
         print(f"Linhas ignoradas         : {skipped}")
+        print(f"Nomes auto-resolvidos    : {team_names_resolved}")
         print(f"Novos sinais CLV         : {signals}")
         print(f"Paper Trades total       : {total_paper}")
         print(f"Paper Trades OPEN        : {total_open}")
