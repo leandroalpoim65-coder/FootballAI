@@ -465,7 +465,7 @@ def health_state(
 def main() -> None:
     print()
     print("==========================================")
-    print(" FOOTBALLAI — AUTONOMOUS AGENT V1")
+    print(" FOOTBALLAI — AUTONOMOUS AGENT V3")
     print("==========================================")
     print()
 
