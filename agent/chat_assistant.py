@@ -7,15 +7,42 @@ from typing import Any
 import pandas as pd
 
 
+def is_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        missing = pd.isna(value)
+    except Exception:
+        return False
+    return bool(missing) if isinstance(missing, (bool, type(pd.NA))) else False
+
+
+def safe_text(value: Any, default: str = "—") -> str:
+    if is_missing(value):
+        return default
+    text = str(value).strip()
+    return text or default
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    if is_missing(value):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def normalize(text: Any) -> str:
-    value = unicodedata.normalize("NFKD", str(text or ""))
+    value = "" if is_missing(text) else str(text)
+    value = unicodedata.normalize("NFKD", value)
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
     return re.sub(r"\s+", " ", value.casefold()).strip()
 
 
 def pct(value: Any, digits: int = 1) -> str:
     try:
-        if value is None or pd.isna(value):
+        if is_missing(value):
             return "—"
         return f"{float(value) * 100:.{digits}f}%"
     except (TypeError, ValueError):
@@ -24,7 +51,7 @@ def pct(value: Any, digits: int = 1) -> str:
 
 def num(value: Any, digits: int = 3) -> str:
     try:
-        if value is None or pd.isna(value):
+        if is_missing(value):
             return "—"
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
@@ -69,7 +96,7 @@ def _policy_answer(snapshot: dict[str, Any]) -> str:
         return "Ainda não encontro uma política ativa na Turso."
 
     return (
-        f"A política ativa é **{p.get('policy_version', '—')}**. "
+        f"A política ativa é **{safe_text(p.get('policy_version'))}**. "
         f"Os mínimos atuais são **CLV {pct(p.get('min_clv_probability'))}**, "
         f"**EV {pct(p.get('min_expected_value'))}** e "
         f"**edge {pct(p.get('min_edge_market'))}**. "
@@ -82,11 +109,11 @@ def _learning_answer(snapshot: dict[str, Any]) -> str:
     if not row:
         return "O learner ainda não tem uma execução registada."
 
-    decision = str(row.get("decision") or "—")
-    resolved = int(row.get("resolved_rows") or 0)
-    train = int(row.get("train_rows") or 0)
-    validation = int(row.get("validation_rows") or 0)
-    promoted = row.get("promoted_policy_version") or "nenhuma"
+    decision = safe_text(row.get("decision"))
+    resolved = safe_int(row.get("resolved_rows"))
+    train = safe_int(row.get("train_rows"))
+    validation = safe_int(row.get("validation_rows"))
+    promoted = safe_text(row.get("promoted_policy_version"), "nenhuma")
 
     return (
         f"O learner está em **{decision}**. Na última execução tinha "
@@ -103,9 +130,9 @@ def _performance_answer(snapshot: dict[str, Any]) -> str:
         return "O Performance Monitor ainda não tem uma execução disponível."
 
     return (
-        f"Último monitor: estado **{row.get('monitor_state', '—')}**, "
-        f"**{int(row.get('resolved_agent_sample') or 0)}** decisões resolvidas, "
-        f"**{int(row.get('qualified_sample') or 0)} QUALIFIED**. "
+        f"Último monitor: estado **{safe_text(row.get('monitor_state'))}**, "
+        f"**{safe_int(row.get('resolved_agent_sample'))}** decisões resolvidas, "
+        f"**{safe_int(row.get('qualified_sample'))} QUALIFIED**. "
         f"ROI original: **{pct(row.get('original_roi'))}**; "
         f"ROI QUALIFIED: **{pct(row.get('qualified_roi'))}**; "
         f"lift: **{pct(row.get('roi_lift'))}**. "
@@ -116,12 +143,12 @@ def _performance_answer(snapshot: dict[str, Any]) -> str:
 
 def _decision_summary(snapshot: dict[str, Any]) -> str:
     counts = snapshot.get("counts") or {}
-    total = int(snapshot.get("decision_total") or 0)
+    total = safe_int(snapshot.get("decision_total"))
     return (
         f"Tenho **{total} decisões** registadas: "
-        f"**{counts.get('QUALIFIED_SHADOW', 0)} QUALIFIED**, "
-        f"**{counts.get('WATCH', 0)} WATCH** e "
-        f"**{counts.get('REJECT', 0)} REJECT**."
+        f"**{safe_int(counts.get('QUALIFIED_SHADOW'))} QUALIFIED**, "
+        f"**{safe_int(counts.get('WATCH'))} WATCH** e "
+        f"**{safe_int(counts.get('REJECT'))} REJECT**."
     )
 
 
@@ -159,11 +186,11 @@ def _league_answer(decisions: pd.DataFrame) -> str:
     best = grouped.head(3)
     worst = grouped.tail(3).sort_values("ROI")
     best_text = ", ".join(
-        f"{row.league} ({int(row.Jogos)} jogos, ROI {pct(row.ROI)})"
+        f"{safe_text(row.league, 'UNKNOWN')} ({safe_int(row.Jogos)} jogos, ROI {pct(row.ROI)})"
         for row in best.itertuples()
     )
     worst_text = ", ".join(
-        f"{row.league} ({int(row.Jogos)} jogos, ROI {pct(row.ROI)})"
+        f"{safe_text(row.league, 'UNKNOWN')} ({safe_int(row.Jogos)} jogos, ROI {pct(row.ROI)})"
         for row in worst.itertuples()
     )
     return f"Melhores ligas com amostra mínima: **{best_text}**. Mais fracas: **{worst_text}**."
@@ -195,11 +222,11 @@ def _find_game(question: str, decisions: pd.DataFrame) -> pd.Series | None:
 
 
 def _game_answer(row: pd.Series) -> str:
-    reasons = str(row.get("reasons_json") or "")
+    reasons = safe_text(row.get("reasons_json"), "")
     return (
-        f"**{row.get('home_team', '—')} vs {row.get('away_team', '—')}**: "
-        f"decisão **{row.get('decision', '—')} / {row.get('tier', '—')}**, "
-        f"política **{row.get('policy_version', '—')}**. "
+        f"**{safe_text(row.get('home_team'))} vs {safe_text(row.get('away_team'))}**: "
+        f"decisão **{safe_text(row.get('decision'))} / {safe_text(row.get('tier'))}**, "
+        f"política **{safe_text(row.get('policy_version'))}**. "
         f"CLV probability **{pct(row.get('clv_probability'))}**, "
         f"sports probability **{pct(row.get('sports_probability'))}**, "
         f"EV **{pct(row.get('expected_value'))}**, edge **{pct(row.get('sports_edge_market'))}**, "
