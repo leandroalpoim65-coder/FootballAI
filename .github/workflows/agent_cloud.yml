@@ -2,11 +2,6 @@ name: FootballAI Autonomous Agent V3
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/agent_cloud.yml"
   schedule:
     # Upcoming Cloud corre aos :05 de 12 em 12 horas.
     # O agente corre depois, com margem para o pipeline terminar.
