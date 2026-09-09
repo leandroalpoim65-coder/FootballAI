@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from ml.paper_trade import normalize_league, normalize_team
+from upcoming_fallback_sources import fetch_emergency_upcoming
 
 
 APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
@@ -468,23 +469,59 @@ def main() -> None:
     connection = connect_turso()
     try:
         ensure_table(connection)
+        source_name = "Football-Data fixtures"
+        used_fallback = False
+
         try:
             observations, info = fetch_observations(today)
         except FootballDataUnavailable as error:
             print()
             print("==========================================")
-            print(" FONTE TEMPORARIAMENTE INDISPONÍVEL")
+            print(" FONTE PRINCIPAL INDISPONÍVEL")
             print("==========================================")
-            print(f"⚠ {error}")
-            print("✅ upcoming_matches ficou intacta na Turso.")
-            print("⏭ Paper Trade/Telegram devem ser ignorados nesta execução.")
-            raise SystemExit(TEMPORARY_SOURCE_EXIT_CODE)
+            print(f"⚠ Football-Data: {error}")
+            print("🔁 A tentar fontes de fallback...")
 
-        print("Fonte                     : Football-Data fixtures")
-        print("The Odds API              : NÃO usada neste workflow")
-        print(f"Linhas futuras no CSV     : {info['rows_future']}")
+            observations, fallback_info = fetch_emergency_upcoming(
+                today.to_pydatetime().date()
+            )
+
+            if not observations:
+                print()
+                print("⚠ Nenhuma fonte de fallback conseguiu dados válidos.")
+                print(f"Detalhe fallback: {fallback_info}")
+                print("✅ upcoming_matches ficou intacta na Turso.")
+                print("⏭ Paper Trade/Telegram serão ignorados nesta execução.")
+                raise SystemExit(TEMPORARY_SOURCE_EXIT_CODE)
+
+            used_fallback = True
+            source_name = str(
+                fallback_info.get("source")
+                or "Fallback de emergência"
+            )
+            info = {
+                "rows_future": len(observations),
+                "unknown_divisions": [],
+                "skipped_no_odds": 0,
+                "fallback": fallback_info,
+            }
+
+            print(
+                f"✅ Fallback ativo: {source_name} "
+                f"| {len(observations)} jogos com odds."
+            )
+
+        print(f"Fonte                     : {source_name}")
+        print(
+            "Modo                      : "
+            + ("FALLBACK DE EMERGÊNCIA" if used_fallback else "PRINCIPAL")
+        )
+        print(f"Linhas futuras no CSV/API : {info['rows_future']}")
         print(f"Jogos válidos com odds    : {len(observations)}")
         print(f"Sem odds 2.5 válidas      : {info['skipped_no_odds']}")
+
+        if used_fallback:
+            print(f"Detalhe fallback          : {info.get('fallback')}")
 
         unknown = info["unknown_divisions"]
         if unknown:
@@ -529,8 +566,10 @@ def main() -> None:
         print()
         print("Regras:")
         print("- OPEN fica congelada na primeira observação.")
-        print("- CURRENT acompanha o Football-Data fixtures.")
-        print("- The Odds API fica reservada exclusivamente para CLOSE.")
+        print("- CURRENT acompanha a melhor fonte disponível.")
+        print("- Football-Data é sempre a fonte principal.")
+        print("- API-Football/The Odds API só entram se a principal falhar.")
+        print("- The Odds API mantém uma reserva de créditos para CLOSE.")
 
     finally:
         connection.close()
