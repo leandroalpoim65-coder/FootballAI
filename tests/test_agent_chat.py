@@ -90,6 +90,48 @@ class AgentChatTests(unittest.TestCase):
         self.assertIn("37.7%", answer)
         self.assertIn("9.3%", answer)
 
+    def test_null_values_do_not_crash_chat(self):
+        learning = pd.DataFrame([
+            {
+                "decision": "WAIT",
+                "resolved_rows": pd.NA,
+                "train_rows": pd.NA,
+                "validation_rows": pd.NA,
+                "promoted_policy_version": pd.NA,
+            }
+        ])
+        performance = pd.DataFrame([
+            {
+                "monitor_state": "COLD_START",
+                "resolved_agent_sample": pd.NA,
+                "qualified_sample": pd.NA,
+                "original_roi": pd.NA,
+                "qualified_roi": pd.NA,
+                "roi_lift": pd.NA,
+                "winner_retention": pd.NA,
+                "loser_rejection": pd.NA,
+            }
+        ])
+
+        learning_answer = answer_question(
+            "O que aprendeste?",
+            self.decisions,
+            self.policies,
+            learning,
+            performance,
+        )
+        performance_answer = answer_question(
+            "Como está a performance?",
+            self.decisions,
+            self.policies,
+            learning,
+            performance,
+        )
+
+        self.assertIn("0 jogos resolvidos", learning_answer)
+        self.assertIn("0 decisões resolvidas", performance_answer)
+        self.assertIn("—", performance_answer)
+
 
 if __name__ == "__main__":
     unittest.main()
