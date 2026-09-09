@@ -1,0 +1,38 @@
+name: FootballAI Agent Performance Monitor V2
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Corre depois do Results Cloud (:25) e do agente (:45 em 00/12 UTC).
+    - cron: "5 1,13 * * *"
+
+concurrency:
+  group: footballai-agent-performance-monitor-v2
+  cancel-in-progress: false
+
+jobs:
+  performance-monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run performance monitor unit tests
+        run: python -m unittest discover -s tests -p "test_performance_monitor.py"
+
+      - name: Run agent performance monitor
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python agent_performance_monitor_cloud.py
