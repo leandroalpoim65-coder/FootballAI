@@ -12,7 +12,7 @@ concurrency:
 jobs:
   update-upcoming:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Update upcoming matches in Turso
+      - name: Update domestic upcoming matches in Turso
         id: upcoming
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
@@ -46,7 +46,7 @@ jobs:
 
           if [ "$code" -eq 75 ]; then
             echo "updated=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Football-Data temporariamente indisponível. Turso preservada; Paper Trade/Telegram ignorados."
+            echo "::warning::Football-Data temporariamente indisponível. Turso doméstica preservada; UEFA ainda será tentada."
             exit 0
           fi
 
@@ -56,15 +56,23 @@ jobs:
 
           echo "updated=true" >> "$GITHUB_OUTPUT"
 
-      - name: Run Paper Trade in Turso
-        if: steps.upcoming.outputs.updated == 'true'
+      - name: Sync UEFA Champions, Europa and Conference upcoming
+        continue-on-error: true
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python paper_trade_cloud.py
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          UEFA_UPCOMING_DAYS: "7"
+          UEFA_UPCOMING_MAX_REQUESTS: "28"
+        run: python uefa_upcoming_cloud.py
+
+      - name: Run Paper Trade with domestic + UEFA history
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python paper_trade_uefa_cloud.py
 
       - name: Notify new signals on Telegram
-        if: steps.upcoming.outputs.updated == 'true'
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
