@@ -5,15 +5,20 @@ from math import isfinite
 from typing import Any
 
 
-POLICY_VERSION = "agent-v1.0"
+DEFAULT_POLICY_VERSION = "agent-v1.0"
+POLICY_VERSION = DEFAULT_POLICY_VERSION
 
-# Frozen candidate rules. These mirror the existing hybrid backtest philosophy:
-# require both a CLV signal and independent sports-model value.
+# Defaults remain conservative. The autonomous learner may promote
+# stricter/looser values only after temporal holdout validation.
 MIN_CLV_PROBABILITY = 0.55
 MIN_EXPECTED_VALUE = 0.03
 MIN_EDGE_MARKET = 0.02
 MIN_ODD = 1.30
 MAX_ODD = 4.00
+
+STRONG_CLV_PROBABILITY = 0.60
+STRONG_EXPECTED_VALUE = 0.05
+STRONG_EDGE_MARKET = 0.03
 
 # Live shadow data can veto weak leagues only after enough observations.
 LEAGUE_MIN_SAMPLE_FOR_VETO = 40
@@ -24,6 +29,22 @@ LEAGUE_BAD_HQ_CLV = 0.0
 # Empirical-Bayes shrinkage prevents small league samples from dominating.
 ROI_PRIOR_STRENGTH = 50.0
 HIT_PRIOR_STRENGTH = 40.0
+
+
+@dataclass(frozen=True)
+class PolicyConfig:
+    version: str = DEFAULT_POLICY_VERSION
+    min_clv_probability: float = MIN_CLV_PROBABILITY
+    min_expected_value: float = MIN_EXPECTED_VALUE
+    min_edge_market: float = MIN_EDGE_MARKET
+    min_odd: float = MIN_ODD
+    max_odd: float = MAX_ODD
+    strong_clv_probability: float = STRONG_CLV_PROBABILITY
+    strong_expected_value: float = STRONG_EXPECTED_VALUE
+    strong_edge_market: float = STRONG_EDGE_MARKET
+
+
+DEFAULT_POLICY = PolicyConfig()
 
 
 @dataclass(frozen=True)
@@ -155,7 +176,10 @@ def evaluate_candidate(
     sports_probability: float,
     global_stats: PerformanceStats,
     league_stats: PerformanceStats,
+    policy: PolicyConfig | None = None,
 ) -> DecisionResult:
+    policy = policy or DEFAULT_POLICY
+
     odd = safe_float(row.get("odd_over25_open"))
     market_probability = safe_float(row.get("fair_probability_open"))
     clv_probability = safe_float(row.get("clv_probability"))
@@ -171,10 +195,10 @@ def evaluate_candidate(
         raise ValueError("sports_probability inválida")
 
     if signal_threshold is None:
-        signal_threshold = MIN_CLV_PROBABILITY
+        signal_threshold = policy.min_clv_probability
 
     frozen_clv_threshold = max(
-        MIN_CLV_PROBABILITY,
+        policy.min_clv_probability,
         signal_threshold,
     )
 
@@ -201,9 +225,9 @@ def evaluate_candidate(
         clv_signal
         and clv_probability >= frozen_clv_threshold
     )
-    odds_ok = MIN_ODD <= odd <= MAX_ODD
-    ev_ok = expected_value >= MIN_EXPECTED_VALUE
-    edge_ok = sports_edge_market >= MIN_EDGE_MARKET
+    odds_ok = policy.min_odd <= odd <= policy.max_odd
+    ev_ok = expected_value >= policy.min_expected_value
+    edge_ok = sports_edge_market >= policy.min_edge_market
 
     if not clv_signal:
         reasons.append("sem sinal CLV original")
@@ -216,19 +240,19 @@ def evaluate_candidate(
     if not odds_ok:
         reasons.append(
             f"odd {odd:.3f} fora do intervalo "
-            f"{MIN_ODD:.2f}-{MAX_ODD:.2f}"
+            f"{policy.min_odd:.2f}-{policy.max_odd:.2f}"
         )
 
     if not ev_ok:
         reasons.append(
             f"EV desportivo {expected_value:.1%} abaixo de "
-            f"{MIN_EXPECTED_VALUE:.1%}"
+            f"{policy.min_expected_value:.1%}"
         )
 
     if not edge_ok:
         reasons.append(
             f"edge vs mercado {sports_edge_market:.1%} abaixo de "
-            f"{MIN_EDGE_MARKET:.1%}"
+            f"{policy.min_edge_market:.1%}"
         )
 
     if not clv_ok:
@@ -254,7 +278,9 @@ def evaluate_candidate(
         )
 
     if not (ev_ok and edge_ok):
-        reasons.append("modelos CLV e desportivo não estão suficientemente alinhados")
+        reasons.append(
+            "modelos CLV e desportivo não estão suficientemente alinhados"
+        )
         return DecisionResult(
             decision="WATCH",
             tier="MODEL_DISAGREEMENT",
@@ -290,9 +316,18 @@ def evaluate_candidate(
         )
 
     strong = (
-        clv_probability >= 0.60
-        and expected_value >= 0.05
-        and sports_edge_market >= 0.03
+        clv_probability >= max(
+            policy.strong_clv_probability,
+            frozen_clv_threshold,
+        )
+        and expected_value >= max(
+            policy.strong_expected_value,
+            policy.min_expected_value,
+        )
+        and sports_edge_market >= max(
+            policy.strong_edge_market,
+            policy.min_edge_market,
+        )
     )
 
     if league_stats.sample < LEAGUE_MIN_SAMPLE_FOR_VETO:
@@ -300,7 +335,10 @@ def evaluate_candidate(
             f"liga ainda com amostra limitada ({league_stats.sample})"
         )
 
-    reasons.append("CLV + modelo desportivo + mercado alinhados")
+    reasons.append(
+        "CLV + modelo desportivo + mercado alinhados "
+        f"({policy.version})"
+    )
 
     return DecisionResult(
         decision="QUALIFIED_SHADOW",
