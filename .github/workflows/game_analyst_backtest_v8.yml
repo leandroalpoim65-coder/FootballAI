@@ -1,0 +1,37 @@
+name: FootballAI Game Analyst Backtest V8
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "agent/game_analyst.py"
+      - "agent_game_analyst_backtest_cloud.py"
+      - "tests/test_game_analyst.py"
+      - ".github/workflows/game_analyst_backtest_v8.yml"
+  pull_request:
+    paths:
+      - "agent/game_analyst.py"
+      - "agent_game_analyst_backtest_cloud.py"
+      - "tests/test_game_analyst.py"
+      - ".github/workflows/game_analyst_backtest_v8.yml"
+
+jobs:
+  game-analyst-backtest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Test game analyst
+        run: python -m unittest discover -s tests -p "test_game_analyst.py"
+      - name: Run blind game analyst backtest
+        if: github.event_name != 'pull_request'
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python agent_game_analyst_backtest_cloud.py
