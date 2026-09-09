@@ -7,7 +7,7 @@ from typing import Any
 from agent.decision_engine import high_quality_close
 
 
-MONITOR_VERSION = "agent-monitor-v2.0"
+MONITOR_VERSION = "agent-monitor-v2.1-broad-shadow"
 
 
 @dataclass(frozen=True)
@@ -49,12 +49,8 @@ def _mean(values: list[float]) -> float | None:
 def unit_profit(row: dict[str, Any]) -> float | None:
     result = safe_float(row.get("result_over25"))
     odd = safe_float(row.get("odd_over25_open"))
-
-    if result not in (0.0, 1.0):
+    if result not in (0.0, 1.0) or odd is None or odd <= 1.0:
         return None
-    if odd is None or odd <= 1.0:
-        return None
-
     return (odd - 1.0) if result == 1.0 else -1.0
 
 
@@ -67,49 +63,38 @@ def build_metrics(rows: list[dict[str, Any]]) -> PerformanceMetrics:
     ev_values: list[float] = []
     edge_values: list[float] = []
     brier_values: list[float] = []
-
     for row in rows:
         profit = unit_profit(row)
         result = safe_float(row.get("result_over25"))
         odd = safe_float(row.get("odd_over25_open"))
-
         if profit is None or result not in (0.0, 1.0) or odd is None:
             continue
-
         wins += int(result)
         profit_units += profit
         odds.append(odd)
-
         clv = safe_float(row.get("clv"))
         if clv is not None:
             clv_values.append(clv)
             if high_quality_close(row.get("closing_source")):
                 hq_clv_values.append(clv)
-
         expected_value = safe_float(row.get("expected_value"))
         if expected_value is not None:
             ev_values.append(expected_value)
-
         edge = safe_float(row.get("sports_edge_market"))
         if edge is not None:
             edge_values.append(edge)
-
         sports_probability = safe_float(row.get("sports_probability"))
         if sports_probability is not None and 0.0 <= sports_probability <= 1.0:
             brier_values.append((sports_probability - result) ** 2)
-
     sample = len(odds)
     losses = sample - wins
-    roi = (profit_units / sample) if sample else None
-    hit_rate = (wins / sample) if sample else None
-
     return PerformanceMetrics(
         sample=sample,
         wins=wins,
         losses=losses,
         profit_units=profit_units,
-        roi=roi,
-        hit_rate=hit_rate,
+        roi=(profit_units / sample) if sample else None,
+        hit_rate=(wins / sample) if sample else None,
         avg_open_odd=_mean(odds),
         avg_clv=_mean(clv_values),
         hq_clv_sample=len(hq_clv_values),
@@ -120,284 +105,97 @@ def build_metrics(rows: list[dict[str, Any]]) -> PerformanceMetrics:
     )
 
 
-def _bin_label(
-    value: Any,
-    cuts: tuple[float, ...],
-    labels: tuple[str, ...],
-) -> str:
+def _bin_label(value: Any, cuts: tuple[float, ...], labels: tuple[str, ...]) -> str:
     number = safe_float(value)
     if number is None:
         return "MISSING"
-
     for index, cut in enumerate(cuts):
         if number < cut:
             return labels[index]
-
     return labels[-1]
 
 
 def clv_probability_bin(value: Any) -> str:
-    return _bin_label(
-        value,
-        (0.45, 0.50, 0.55, 0.60, 0.65),
-        (
-            "<0.45",
-            "0.45-0.50",
-            "0.50-0.55",
-            "0.55-0.60",
-            "0.60-0.65",
-            "0.65+",
-        ),
-    )
+    return _bin_label(value, (0.40, 0.45, 0.50, 0.55, 0.60, 0.65), ("<0.40", "0.40-0.45", "0.45-0.50", "0.50-0.55", "0.55-0.60", "0.60-0.65", "0.65+"))
 
 
 def sports_probability_bin(value: Any) -> str:
-    return _bin_label(
-        value,
-        (0.45, 0.50, 0.55, 0.60, 0.65),
-        (
-            "<0.45",
-            "0.45-0.50",
-            "0.50-0.55",
-            "0.55-0.60",
-            "0.60-0.65",
-            "0.65+",
-        ),
-    )
+    return _bin_label(value, (0.45, 0.50, 0.55, 0.60, 0.65), ("<0.45", "0.45-0.50", "0.50-0.55", "0.55-0.60", "0.60-0.65", "0.65+"))
 
 
 def expected_value_bin(value: Any) -> str:
-    return _bin_label(
-        value,
-        (0.0, 0.03, 0.05, 0.10),
-        (
-            "<0",
-            "0-0.03",
-            "0.03-0.05",
-            "0.05-0.10",
-            "0.10+",
-        ),
-    )
+    return _bin_label(value, (0.0, 0.03, 0.05, 0.10), ("<0", "0-0.03", "0.03-0.05", "0.05-0.10", "0.10+"))
 
 
 def odds_bin(value: Any) -> str:
-    return _bin_label(
-        value,
-        (1.60, 1.90, 2.20, 2.60),
-        (
-            "<1.60",
-            "1.60-1.90",
-            "1.90-2.20",
-            "2.20-2.60",
-            "2.60+",
-        ),
-    )
+    return _bin_label(value, (1.60, 1.90, 2.20, 2.60), ("<1.60", "1.60-1.90", "1.90-2.20", "2.20-2.60", "2.60+"))
 
 
-def build_segments(
-    rows: list[dict[str, Any]],
-) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    segments: dict[
-        tuple[str, str],
-        list[dict[str, Any]],
-    ] = {}
-
-    def add(
-        segment_type: str,
-        key: str,
-        row: dict[str, Any],
-    ) -> None:
-        segments.setdefault(
-            (segment_type, key),
-            [],
-        ).append(row)
+def build_segments(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    segments: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    def add(segment_type: str, key: str, row: dict[str, Any]) -> None:
+        segments.setdefault((segment_type, key), []).append(row)
 
     for row in rows:
+        # Research universe: every prospective decision, including CLV <55%.
+        # This never turns a row into a betting signal; it only accelerates evidence.
         add("baseline", "ALL_AGENT_DECISIONS", row)
+        league = str(row.get("league") or "UNKNOWN").strip() or "UNKNOWN"
+        add("league_observed", league, row)
+        add("clv_bin_observed", clv_probability_bin(row.get("clv_probability")), row)
+        add("sports_bin_observed", sports_probability_bin(row.get("sports_probability")), row)
+        add("ev_bin_observed", expected_value_bin(row.get("expected_value")), row)
+        add("odds_bin_observed", odds_bin(row.get("odd_over25_open")), row)
 
-        original_signal = (
-            safe_int(row.get("original_clv_signal"), 0) == 1
-        )
-        decision = str(
-            row.get("decision") or ""
-        ).strip().upper()
-        tier = str(
-            row.get("tier") or ""
-        ).strip().upper()
-        league = (
-            str(row.get("league") or "UNKNOWN").strip()
-            or "UNKNOWN"
-        )
+        original_signal = safe_int(row.get("original_clv_signal"), 0) == 1
+        decision = str(row.get("decision") or "").strip().upper()
+        tier = str(row.get("tier") or "").strip().upper()
 
         if original_signal:
             add("strategy", "ORIGINAL_SIGNAL", row)
             add("league_original", league, row)
-            add(
-                "clv_bin_original",
-                clv_probability_bin(
-                    row.get("clv_probability")
-                ),
-                row,
-            )
-            add(
-                "sports_bin_original",
-                sports_probability_bin(
-                    row.get("sports_probability")
-                ),
-                row,
-            )
-            add(
-                "ev_bin_original",
-                expected_value_bin(
-                    row.get("expected_value")
-                ),
-                row,
-            )
-            add(
-                "odds_bin_original",
-                odds_bin(
-                    row.get("odd_over25_open")
-                ),
-                row,
-            )
+            add("clv_bin_original", clv_probability_bin(row.get("clv_probability")), row)
+            add("sports_bin_original", sports_probability_bin(row.get("sports_probability")), row)
+            add("ev_bin_original", expected_value_bin(row.get("expected_value")), row)
+            add("odds_bin_original", odds_bin(row.get("odd_over25_open")), row)
 
         if decision == "QUALIFIED_SHADOW":
             add("strategy", "QUALIFIED_SHADOW", row)
-
             if tier in {"A", "B"}:
-                add(
-                    "strategy",
-                    f"QUALIFIED_{tier}",
-                    row,
-                )
-
+                add("strategy", f"QUALIFIED_{tier}", row)
             add("league_qualified", league, row)
-            add(
-                "clv_bin_qualified",
-                clv_probability_bin(
-                    row.get("clv_probability")
-                ),
-                row,
-            )
-            add(
-                "sports_bin_qualified",
-                sports_probability_bin(
-                    row.get("sports_probability")
-                ),
-                row,
-            )
-            add(
-                "ev_bin_qualified",
-                expected_value_bin(
-                    row.get("expected_value")
-                ),
-                row,
-            )
-            add(
-                "odds_bin_qualified",
-                odds_bin(
-                    row.get("odd_over25_open")
-                ),
-                row,
-            )
-
+            add("clv_bin_qualified", clv_probability_bin(row.get("clv_probability")), row)
+            add("sports_bin_qualified", sports_probability_bin(row.get("sports_probability")), row)
+            add("ev_bin_qualified", expected_value_bin(row.get("expected_value")), row)
+            add("odds_bin_qualified", odds_bin(row.get("odd_over25_open")), row)
         elif decision == "WATCH":
             add("strategy", "WATCH", row)
-
         elif decision == "REJECT":
             add("strategy", "REJECT", row)
 
         if original_signal:
             if decision == "QUALIFIED_SHADOW":
-                add(
-                    "signal_filter",
-                    "ORIGINAL_SIGNAL_QUALIFIED",
-                    row,
-                )
+                add("signal_filter", "ORIGINAL_SIGNAL_QUALIFIED", row)
             else:
-                add(
-                    "signal_filter",
-                    "ORIGINAL_SIGNAL_NOT_QUALIFIED",
-                    row,
-                )
-
+                add("signal_filter", "ORIGINAL_SIGNAL_NOT_QUALIFIED", row)
             if decision == "WATCH":
-                add(
-                    "signal_filter",
-                    "ORIGINAL_SIGNAL_WATCH",
-                    row,
-                )
-
+                add("signal_filter", "ORIGINAL_SIGNAL_WATCH", row)
             elif decision == "REJECT":
-                add(
-                    "signal_filter",
-                    "ORIGINAL_SIGNAL_REJECT",
-                    row,
-                )
-
+                add("signal_filter", "ORIGINAL_SIGNAL_REJECT", row)
     return segments
 
 
-def filter_diagnostics(
-    rows: list[dict[str, Any]],
-) -> dict[str, float | int | None]:
-    original_rows = [
-        row
-        for row in rows
-        if safe_int(
-            row.get("original_clv_signal"),
-            0,
-        ) == 1
-    ]
-
-    qualified_rows = [
-        row
-        for row in original_rows
-        if str(
-            row.get("decision") or ""
-        ).strip().upper() == "QUALIFIED_SHADOW"
-    ]
-
-    not_qualified_rows = [
-        row
-        for row in original_rows
-        if str(
-            row.get("decision") or ""
-        ).strip().upper() != "QUALIFIED_SHADOW"
-    ]
-
+def filter_diagnostics(rows: list[dict[str, Any]]) -> dict[str, float | int | None]:
+    original_rows = [row for row in rows if safe_int(row.get("original_clv_signal"), 0) == 1]
+    qualified_rows = [row for row in original_rows if str(row.get("decision") or "").strip().upper() == "QUALIFIED_SHADOW"]
+    not_qualified_rows = [row for row in original_rows if str(row.get("decision") or "").strip().upper() != "QUALIFIED_SHADOW"]
     original = build_metrics(original_rows)
     qualified = build_metrics(qualified_rows)
     rejected = build_metrics(not_qualified_rows)
-
-    winner_retention = (
-        qualified.wins / original.wins
-        if original.wins > 0
-        else None
-    )
-
-    loser_rejection = (
-        (original.losses - qualified.losses)
-        / original.losses
-        if original.losses > 0
-        else None
-    )
-
-    selection_rate = (
-        qualified.sample / original.sample
-        if original.sample > 0
-        else None
-    )
-
-    roi_lift = (
-        qualified.roi - original.roi
-        if (
-            qualified.roi is not None
-            and original.roi is not None
-        )
-        else None
-    )
-
+    winner_retention = qualified.wins / original.wins if original.wins > 0 else None
+    loser_rejection = (original.losses - qualified.losses) / original.losses if original.losses > 0 else None
+    selection_rate = qualified.sample / original.sample if original.sample > 0 else None
+    roi_lift = qualified.roi - original.roi if qualified.roi is not None and original.roi is not None else None
     return {
         "original_sample": original.sample,
         "original_wins": original.wins,
@@ -416,31 +214,14 @@ def filter_diagnostics(
     }
 
 
-def monitor_state(
-    diagnostics: dict[str, float | int | None],
-) -> str:
-    qualified_sample = int(
-        diagnostics.get("qualified_sample") or 0
-    )
-
-    original_roi = safe_float(
-        diagnostics.get("original_roi")
-    )
-    qualified_roi = safe_float(
-        diagnostics.get("qualified_roi")
-    )
-
-    if qualified_sample < 20:
+def monitor_state(diagnostics: dict[str, float | int | None]) -> str:
+    sample = safe_int(diagnostics.get("qualified_sample"), 0)
+    if sample < 20:
         return "COLD_START"
-
-    if qualified_sample < 50:
+    if sample < 50:
         return "EVIDENCE_BUILDING"
-
-    if (
-        original_roi is not None
-        and qualified_roi is not None
-        and qualified_roi < original_roi - 0.05
-    ):
+    original_roi = safe_float(diagnostics.get("original_roi"))
+    qualified_roi = safe_float(diagnostics.get("qualified_roi"))
+    if original_roi is not None and qualified_roi is not None and qualified_roi < original_roi:
         return "REVIEW"
-
     return "TRACKING"
