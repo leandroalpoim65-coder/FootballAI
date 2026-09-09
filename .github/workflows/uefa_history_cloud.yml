@@ -1,0 +1,39 @@
+name: FootballAI UEFA History Cloud
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 3 * * 1"
+
+concurrency:
+  group: footballai-uefa-history-cloud
+  cancel-in-progress: false
+
+jobs:
+  sync-uefa-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run UEFA configuration tests
+        run: python -m unittest discover -s tests -p "test_uefa_competitions.py"
+
+      - name: Sync UEFA historical fixtures to Turso
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          UEFA_HISTORY_SEASONS_BACK: "5"
+        run: python uefa_history_cloud.py
