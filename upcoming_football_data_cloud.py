@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -80,26 +81,85 @@ def ensure_table(connection) -> None:
     connection.commit()
 
 
-def http_get_bytes(url: str) -> bytes:
-    request = Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 FootballAI/Cloud"},
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            content = response.read()
-    except HTTPError as error:
-        try:
-            detail = error.read().decode("utf-8", errors="replace")
-        except Exception:
-            detail = ""
-        raise RuntimeError(f"HTTP {error.code}: {detail[:300]}") from error
-    except URLError as error:
-        raise RuntimeError(f"Erro de ligação: {error.reason}") from error
+def http_get_bytes(
+    url: str,
+    attempts: int = 5,
+    base_delay_seconds: int = 8,
+) -> bytes:
+    """
+    Faz download com retry para falhas temporárias da Football-Data.
 
-    if not content:
-        raise RuntimeError("Football-Data devolveu resposta vazia.")
-    return content
+    O site devolve ocasionalmente 5xx/429 durante manutenção ou picos.
+    Nessas situações não devemos falhar logo à primeira tentativa.
+    """
+    retryable_http = {429, 500, 502, 503, 504}
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        request = Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 FootballAI/Cloud",
+                "Accept": "text/csv,text/plain,*/*",
+                "Cache-Control": "no-cache",
+            },
+        )
+
+        try:
+            with urlopen(request, timeout=30) as response:
+                content = response.read()
+
+            if not content:
+                raise RuntimeError("Football-Data devolveu resposta vazia.")
+
+            if attempt > 1:
+                print(
+                    f"✅ Football-Data recuperou na tentativa "
+                    f"{attempt}/{attempts}."
+                )
+            return content
+
+        except HTTPError as error:
+            try:
+                detail = error.read().decode("utf-8", errors="replace")
+            except Exception:
+                detail = ""
+
+            last_error = RuntimeError(
+                f"HTTP {error.code}: {detail[:300]}"
+            )
+
+            if error.code not in retryable_http or attempt >= attempts:
+                raise last_error from error
+
+            delay = base_delay_seconds * attempt
+            print(
+                f"⚠ Football-Data HTTP {error.code} "
+                f"(tentativa {attempt}/{attempts}). "
+                f"Nova tentativa em {delay}s..."
+            )
+            time.sleep(delay)
+
+        except (URLError, TimeoutError) as error:
+            last_error = RuntimeError(
+                f"Erro temporário de ligação: "
+                f"{getattr(error, 'reason', error)}"
+            )
+
+            if attempt >= attempts:
+                raise last_error from error
+
+            delay = base_delay_seconds * attempt
+            print(
+                f"⚠ Football-Data indisponível "
+                f"(tentativa {attempt}/{attempts}). "
+                f"Nova tentativa em {delay}s..."
+            )
+            time.sleep(delay)
+
+    raise last_error or RuntimeError(
+        "Não foi possível obter Football-Data."
+    )
 
 
 def read_csv(content: bytes) -> pd.DataFrame:
