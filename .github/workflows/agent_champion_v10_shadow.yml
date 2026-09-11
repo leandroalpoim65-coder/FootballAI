@@ -8,19 +8,23 @@ on:
     paths:
       - 'agent/champion_v10.py'
       - 'agent/multi_analyst.py'
-      - 'agent_champion_v10_shadow_cloud.py'
+      - 'agent_v10_universe_cloud.py'
+      - 'pages/1_Agente_IA.py'
       - 'tests/test_champion_v10.py'
+      - 'tests/test_v10_universe.py'
       - 'requirements.txt'
       - '.github/workflows/agent_champion_v10_shadow.yml'
   schedule:
-    # Corre 10 minutos depois do Autonomous Agent V3.
+    # Segunda passagem: associa Paper Trade/CLV e atualiza resultados.
     - cron: "55 0,12 * * *"
   pull_request:
     paths:
       - 'agent/champion_v10.py'
       - 'agent/multi_analyst.py'
-      - 'agent_champion_v10_shadow_cloud.py'
+      - 'agent_v10_universe_cloud.py'
+      - 'pages/1_Agente_IA.py'
       - 'tests/test_champion_v10.py'
+      - 'tests/test_v10_universe.py'
       - 'requirements.txt'
       - '.github/workflows/agent_champion_v10_shadow.yml'
 
@@ -31,7 +35,7 @@ concurrency:
 jobs:
   champion-shadow:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -46,12 +50,17 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Test V10 champion
-        run: python -m unittest discover -s tests -p "test_champion_v10.py"
+      - name: Compile V10 and dashboard
+        run: python -m py_compile agent_v10_universe_cloud.py pages/1_Agente_IA.py
 
-      - name: Run V10 prospective shadow
+      - name: Test V10 champion and universe
+        run: |
+          python -m unittest discover -s tests -p "test_champion_v10.py"
+          python -m unittest discover -s tests -p "test_v10_universe.py"
+
+      - name: Run V10 full-universe prospective shadow
         if: github.event_name != 'pull_request'
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python agent_champion_v10_shadow_cloud.py
+        run: python agent_v10_universe_cloud.py
