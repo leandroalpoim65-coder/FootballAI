@@ -12,8 +12,8 @@ on:
       - 'pages/2_Aprendizagem_V11.py'
       - '.github/workflows/agent_outcome_learning_v11.yml'
   schedule:
-    # Corre 15 minutos depois do V10 Champion Shadow.
-    - cron: "10 1,13 * * *"
+    # Results Cloud corre aos :25 e V10 aos :45; V11 aprende 10 min depois.
+    - cron: "55 * * * *"
   pull_request:
     paths:
       - 'agent/outcome_learning.py'

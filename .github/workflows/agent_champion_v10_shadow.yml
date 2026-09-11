@@ -15,8 +15,9 @@ on:
       - 'requirements.txt'
       - '.github/workflows/agent_champion_v10_shadow.yml'
   schedule:
-    # Segunda passagem: associa Paper Trade/CLV e atualiza resultados.
-    - cron: "55 0,12 * * *"
+    # Results Cloud corre aos :25; V10 passa 20 min depois para congelar novos jogos
+    # e absorver resultados acabados sem esperar pelo ciclo seguinte de meio dia.
+    - cron: "45 * * * *"
   pull_request:
     paths:
       - 'agent/champion_v10.py'
