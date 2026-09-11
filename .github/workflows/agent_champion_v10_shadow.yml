@@ -2,6 +2,16 @@ name: FootballAI V10 Champion Shadow
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'agent/champion_v10.py'
+      - 'agent/multi_analyst.py'
+      - 'agent_champion_v10_shadow_cloud.py'
+      - 'tests/test_champion_v10.py'
+      - 'requirements.txt'
+      - '.github/workflows/agent_champion_v10_shadow.yml'
   schedule:
     # Corre 10 minutos depois do Autonomous Agent V3.
     - cron: "55 0,12 * * *"
