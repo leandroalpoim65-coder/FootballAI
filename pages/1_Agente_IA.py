@@ -386,6 +386,11 @@ today_bets = (
     if not today_rows.empty and "decision" in today_rows.columns
     else pd.DataFrame()
 )
+today_pass = (
+    today_rows[today_rows["decision"] == "PASS"].copy()
+    if not today_rows.empty and "decision" in today_rows.columns
+    else pd.DataFrame()
+)
 if not today_bets.empty and "result_over25" in today_bets.columns:
     pending_bets = today_bets[~today_bets["result_over25"].isin([0, 1])].copy()
 else:
@@ -446,7 +451,7 @@ main_today, main_results, main_logic, main_chat, main_tech = st.tabs(
 with main_today:
     st.subheader(f"Jogos de hoje · {today}")
     st.caption(
-        "Aqui aparecem primeiro as decisões que interessam para acompanhar o dia. BET_SHADOW é apenas paper/shadow, não executa apostas reais."
+        "Todos os jogos já analisados pelo Champion aparecem abaixo com a decisão. BET_SHADOW é apenas paper/shadow, não executa apostas reais."
     )
 
     if not pending_bets.empty:
@@ -468,6 +473,37 @@ with main_today:
     else:
         st.info("Sem BET_SHADOW para hoje até ao momento.")
 
+    st.markdown("#### 📋 Jogos analisados e decisões")
+    if today_rows.empty:
+        st.info("Ainda não há decisões V10 de hoje.")
+    else:
+        g1, g2, g3 = st.columns(3)
+        g1.metric("Total analisados", len(today_rows))
+        g2.metric("🎯 BET_SHADOW", len(today_bets))
+        g3.metric("⛔ PASS", len(today_pass))
+
+        today_table = today_rows.copy()
+        if "decision" in today_table.columns:
+            today_table["_decision_order"] = (
+                today_table["decision"].map({"BET_SHADOW": 0, "PASS": 1}).fillna(2)
+            )
+            sort_columns = ["_decision_order"]
+            if "fixture_time" in today_table.columns:
+                sort_columns.append("fixture_time")
+            today_table = today_table.sort_values(sort_columns)
+
+        st.dataframe(
+            display_games(today_table, include_result=True),
+            use_container_width=True,
+            hide_index=True,
+            column_config=COLUMN_CONFIG,
+            height=min(700, 38 + (len(today_table) * 35)),
+        )
+        st.caption(
+            "🎯 BET_SHADOW = jogo selecionado pelo Champion · ⛔ PASS = jogo analisado mas rejeitado. "
+            "A coluna Decisão permite ver imediatamente o que o agente fez em cada jogo."
+        )
+
     st.markdown("#### Cobertura do agente")
     if v10_run_row:
         c1, c2, c3, c4 = st.columns(4)
@@ -483,17 +519,6 @@ with main_today:
             )
     else:
         st.caption("Ainda não há registo da última varredura do universo completo.")
-
-    with st.expander("📋 Ver todos os jogos analisados hoje", expanded=False):
-        if today_rows.empty:
-            st.info("Ainda não há decisões V10 de hoje.")
-        else:
-            st.dataframe(
-                display_games(today_rows, include_result=True),
-                use_container_width=True,
-                hide_index=True,
-                column_config=COLUMN_CONFIG,
-            )
 
 with main_results:
     st.subheader("Desempenho prospectivo do Champion V10")
