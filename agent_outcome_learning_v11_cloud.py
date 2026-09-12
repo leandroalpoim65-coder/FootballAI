@@ -223,6 +223,115 @@ def print_metric(label: str, metric) -> None:
     )
 
 
+def _counterfactual_profit(row: dict) -> float:
+    odd = float(row.get("odd_over25_open") or 0.0)
+    return odd - 1.0 if int(row.get("result_over25") or 0) == 1 else -1.0
+
+
+def _failed_votes(row: dict) -> list[str]:
+    failed: list[str] = []
+    if float(row.get("goal_score") or 0.0) < CHAMPION_POLICY.goal_threshold:
+        failed.append("G")
+    if float(row.get("attack_score") or 0.0) < CHAMPION_POLICY.attack_threshold:
+        failed.append("A")
+    if float(row.get("ml_score") or 0.0) < CHAMPION_POLICY.ml_threshold:
+        failed.append("M")
+    if float(row.get("value_score") or 0.0) < CHAMPION_POLICY.value_threshold:
+        failed.append("V")
+    return failed
+
+
+def print_resolved_audit(rows: list[dict], patterns: list[dict]) -> None:
+    pass_rows = [row for row in rows if str(row.get("decision")) == "PASS"]
+    bet_rows = [row for row in rows if str(row.get("decision")) == "BET_SHADOW"]
+
+    decision_patterns = {
+        str(pattern.get("segment")): pattern
+        for pattern in patterns
+        if str(pattern.get("dimension")) == "decision"
+    }
+    pass_pattern = decision_patterns.get("PASS")
+
+    print("\n----------------------------------------------")
+    print(" AUDITORIA PROSPECTIVA — BET vs PASS")
+    print("----------------------------------------------")
+    print(f"BET_SHADOW resolvidas    : {len(bet_rows)}")
+    print(f"PASS resolvidos          : {len(pass_rows)}")
+
+    if pass_pattern is not None:
+        n = int(pass_pattern["n"])
+        overs = int(pass_pattern["wins"])
+        unders = n - overs
+        print(f"PASS que deram Over 2.5  : {overs}")
+        print(f"PASS que deram Under 2.5 : {unders}")
+        print(f"Over rate dos PASS       : {pct(pass_pattern['over_rate'])}")
+        print(f"Odd média dos PASS       : {float(pass_pattern['avg_odd']):.2f}")
+        print(
+            "Lucro se apostasse PASS  : "
+            f"{float(pass_pattern['counterfactual_profit']):+.2f}u"
+        )
+        print(
+            "ROI se apostasse PASS    : "
+            f"{pct(pass_pattern['counterfactual_roi'])}"
+        )
+
+    near_vote = []
+    ev_gate_only = []
+    for row in pass_rows:
+        ev = float(row.get("expected_value") or 0.0)
+        votes = int(row.get("vote_count") or 0)
+        if ev >= CHAMPION_POLICY.min_expected_value and votes == CHAMPION_POLICY.min_votes - 1:
+            near_vote.append(row)
+        if ev < CHAMPION_POLICY.min_expected_value and votes >= CHAMPION_POLICY.min_votes:
+            ev_gate_only.append(row)
+
+    def print_subset(label: str, subset: list[dict]) -> None:
+        overs = sum(int(row.get("result_over25") or 0) for row in subset)
+        profit = sum(_counterfactual_profit(row) for row in subset)
+        roi = profit / len(subset) if subset else None
+        print(f"\n{label}")
+        print(f"  Jogos                  : {len(subset)}")
+        print(f"  Overs / Unders         : {overs} / {len(subset) - overs}")
+        print(f"  Over rate              : {pct(overs / len(subset) if subset else None)}")
+        print(f"  Lucro contrafactual    : {profit:+.2f}u")
+        print(f"  ROI contrafactual      : {pct(roi)}")
+        for row in subset:
+            result = "OVER" if int(row.get("result_over25") or 0) else "UNDER"
+            failed = "+".join(_failed_votes(row)) or "EV"
+            print(
+                "  - "
+                f"{row.get('fixture_date')} | {row.get('home_team')} vs {row.get('away_team')} "
+                f"| {result} | odd={float(row.get('odd_over25_open') or 0):.2f} "
+                f"| votes={int(row.get('vote_count') or 0)} "
+                f"| falhou={failed} "
+                f"| G={float(row.get('goal_score') or 0):.1f} "
+                f"A={float(row.get('attack_score') or 0):.1f} "
+                f"M={float(row.get('ml_score') or 0):.1f} "
+                f"V={float(row.get('value_score') or 0):.1f} "
+                f"EV={float(row.get('expected_value') or 0):+.3f}"
+            )
+
+    print_subset("PASS a 1 voto da BET (EV >= 0)", near_vote)
+    print_subset("PASS bloqueados apenas pelo EV (< 0)", ev_gate_only)
+
+    print("\nTodos os PASS resolvidos:")
+    for row in pass_rows:
+        result = "OVER" if int(row.get("result_over25") or 0) else "UNDER"
+        failed = "+".join(_failed_votes(row)) or "EV"
+        print(
+            "  - "
+            f"{row.get('fixture_date')} | {row.get('home_team')} vs {row.get('away_team')} "
+            f"| {result} | odd={float(row.get('odd_over25_open') or 0):.2f} "
+            f"| votes={int(row.get('vote_count') or 0)} "
+            f"| falhou={failed} "
+            f"| G={float(row.get('goal_score') or 0):.1f} "
+            f"A={float(row.get('attack_score') or 0):.1f} "
+            f"M={float(row.get('ml_score') or 0):.1f} "
+            f"V={float(row.get('value_score') or 0):.1f} "
+            f"EV={float(row.get('expected_value') or 0):+.3f}"
+        )
+
+
 def main() -> None:
     started_at = utc_now()
     print("\n==============================================")
@@ -243,6 +352,7 @@ def main() -> None:
         print(f"Jogos V10 resolvidos    : {len(rows)}")
         print(f"Datas únicas resolvidas : {unique_dates}")
         print(f"Padrões calculados      : {len(patterns)}")
+        print_resolved_audit(rows, patterns)
 
         empty_metric = metrics([], CHAMPION_POLICY)
 
