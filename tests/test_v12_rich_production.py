@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from agent.v12_rich_batch import build_fixture_feature_rows_resilient
 from agent.v12_rich_production import BASE_TRAIN_END, CALIBRATION_END, RICH_ANALYST_FEATURES, build_fixture_feature_rows
 
 
@@ -14,6 +15,10 @@ def _history():
     return pd.DataFrame(rows)
 
 
+def _fixture(key="future-a-b", away="Beta"):
+    return {"fixture_key":key,"fixture_date":"2026-01-10","league":"Test League","home_team":"Alpha","away_team":away,"odd_over25_open":1.95,"odd_under25_open":1.85}
+
+
 def test_fixed_cutoffs_and_feature_count():
     assert BASE_TRAIN_END == pd.Timestamp("2025-05-31")
     assert CALIBRATION_END == pd.Timestamp("2026-05-31")
@@ -21,7 +26,15 @@ def test_fixed_cutoffs_and_feature_count():
 
 
 def test_future_fixture_uses_same_73_feature_pipeline():
-    fixture={"fixture_key":"future-a-b","fixture_date":"2026-01-10","league":"Test League","home_team":"Alpha","away_team":"Beta","odd_over25_open":1.95,"odd_under25_open":1.85}
-    result=build_fixture_feature_rows(_history(),[fixture])["future-a-b"]
+    result=build_fixture_feature_rows(_history(),[_fixture()])["future-a-b"]
     assert set(result["features"]) == set(RICH_ANALYST_FEATURES)
     assert 0.0 < result["market_probability"] < 1.0
+
+
+def test_bad_fixture_does_not_abort_good_fixture_batch():
+    good=_fixture()
+    bad=_fixture("future-a-unknown", "Unknown")
+    results,errors=build_fixture_feature_rows_resilient(_history(),[good,bad])
+    assert "future-a-b" in results
+    assert "future-a-unknown" in errors
+    assert "future-a-unknown" not in results
