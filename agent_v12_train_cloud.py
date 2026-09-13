@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent
 MODEL_PATH = ROOT / "ml" / "modelo_over25_v12.pkl"
 META_PATH = ROOT / "ml" / "metadata_modelo_over25_v12.json"
 REPORT_PATH = ROOT / "reports" / "v12_test_calibration.csv"
-VERSION = "v12-calibrated-65k-v3"
+VERSION = "v12-calibrated-65k-v4"
 
 
 def load_matches() -> pd.DataFrame:
@@ -66,6 +66,15 @@ def market_only(frame: pd.DataFrame) -> pd.DataFrame:
     return frame[frame.market_eligible == 1].dropna(
         subset=["odd_over25_open","odd_under25_open","market_probability","market_overround"]
     ).copy()
+
+
+def metric_delta(model_metrics: dict[str, float], baseline_metrics: dict[str, float]) -> dict[str, float]:
+    return {
+        "brier": float(model_metrics["brier"] - baseline_metrics["brier"]),
+        "log_loss": float(model_metrics["log_loss"] - baseline_metrics["log_loss"]),
+        "auc": float(model_metrics["auc"] - baseline_metrics["auc"]),
+        "calibration_bias_abs": float(abs(model_metrics["calibration_bias"]) - abs(baseline_metrics["calibration_bias"])),
+    }
 
 
 def main() -> None:
@@ -135,15 +144,28 @@ def main() -> None:
     market_cal_all = market_only(sport_cal_all)
     raw_market_cal = probabilities(base, market_cal_all[features])
     consensus_calibrator = fit_calibrator(consensus_kind, raw_market_cal, market_cal_all)
+    consensus_coefficients = {
+        "sports_logit": float(consensus_calibrator.coef_[0][0]),
+        "market_logit": float(consensus_calibrator.coef_[0][1]),
+        "overround": float(consensus_calibrator.coef_[0][2]),
+        "intercept": float(consensus_calibrator.intercept_[0]),
+    }
+    print("Pesos consenso market_blend:", json.dumps(consensus_coefficients, ensure_ascii=False))
 
     raw_policy = probabilities(base, policy_set[features])
     p_policy_ind = apply_calibrator(independent_kind, independent_calibrator, raw_policy, policy_set)
     p_policy_cons = apply_calibrator(consensus_kind, consensus_calibrator, raw_policy, policy_set)
+    policy_market_baseline = probability_metrics(
+        policy_set.actual_over25,
+        policy_set.market_probability.to_numpy(dtype=float),
+    )
+    policy_consensus_metrics = probability_metrics(policy_set.actual_over25, p_policy_cons)
+    print("POLICY market baseline:", json.dumps(policy_market_baseline, ensure_ascii=False))
     print("POLICY independent probability:", json.dumps(probability_metrics(policy_set.actual_over25, p_policy_ind), ensure_ascii=False))
     print("POLICY independent betting:", json.dumps(betting_metrics(policy_set, p_policy_ind, policy), ensure_ascii=False))
     print("POLICY independent edges:", json.dumps(edge_distribution(policy_set, p_policy_ind), ensure_ascii=False))
-    print("POLICY consensus probability:", json.dumps(probability_metrics(policy_set.actual_over25, p_policy_cons), ensure_ascii=False))
-    print("POLICY consensus edges:", json.dumps(edge_distribution(policy_set, p_policy_cons), ensure_ascii=False))
+    print("POLICY consensus probability:", json.dumps(policy_consensus_metrics, ensure_ascii=False))
+    print("POLICY consensus vs market delta:", json.dumps(metric_delta(policy_consensus_metrics, policy_market_baseline), ensure_ascii=False))
 
     raw_test_sport = probabilities(base, test_sport[features])
     p_test_sport_ind = apply_calibrator(independent_kind, independent_calibrator, raw_test_sport, test_sport)
@@ -151,24 +173,33 @@ def main() -> None:
     p_test_market_ind = apply_calibrator(independent_kind, independent_calibrator, raw_test_market, test_market)
     p_test_cons = apply_calibrator(consensus_kind, consensus_calibrator, raw_test_market, test_market)
 
+    test_market_baseline = probability_metrics(
+        test_market.actual_over25,
+        test_market.market_probability.to_numpy(dtype=float),
+    )
+    test_market_ece = ece(
+        test_market.actual_over25,
+        test_market.market_probability.to_numpy(dtype=float),
+    )
     test_ind_sport = probability_metrics(test_sport.actual_over25, p_test_sport_ind)
     test_ind_market = probability_metrics(test_market.actual_over25, p_test_market_ind)
     test_consensus = probability_metrics(test_market.actual_over25, p_test_cons)
     test_bets = betting_metrics(test_market, p_test_market_ind, policy)
     test_ind_ece = ece(test_market.actual_over25, p_test_market_ind)
     test_cons_ece = ece(test_market.actual_over25, p_test_cons)
+    test_consensus_delta = metric_delta(test_consensus, test_market_baseline)
+
+    print("TEST market baseline:", json.dumps(test_market_baseline, ensure_ascii=False))
+    print(f"TEST market baseline ECE={test_market_ece:.4f}")
     print("TEST independent sports:", json.dumps(test_ind_sport, ensure_ascii=False))
     print("TEST independent market-subset:", json.dumps(test_ind_market, ensure_ascii=False))
     print("TEST independent betting:", json.dumps(test_bets, ensure_ascii=False))
     print("TEST independent edges:", json.dumps(edge_distribution(test_market, p_test_market_ind), ensure_ascii=False))
     print(f"TEST independent ECE={test_ind_ece:.4f}")
     print("TEST consensus calibrated:", json.dumps(test_consensus, ensure_ascii=False))
-    print("TEST consensus edges:", json.dumps(edge_distribution(test_market, p_test_cons), ensure_ascii=False))
+    print("TEST consensus vs market delta:", json.dumps(test_consensus_delta, ensure_ascii=False))
     print(f"TEST consensus ECE={test_cons_ece:.4f}")
 
-    # Production refit happens only after the untouched final-test metrics above
-    # have been printed. Both probabilities are retained: independent for edge,
-    # consensus for calibrated match forecast/context.
     prod_base_train = data[data.date < d90].copy()
     prod_base = clone(candidates()[winner])
     prod_base.fit(prod_base_train[features], prod_base_train.actual_over25)
@@ -190,7 +221,6 @@ def main() -> None:
         "independent_calibrator":prod_independent_calibrator,
         "consensus_calibration_kind":consensus_kind,
         "consensus_calibrator":prod_consensus_calibrator,
-        # Backward-compatible consensus fields until shadow is upgraded.
         "calibration_kind":consensus_kind,
         "calibrator":prod_consensus_calibrator,
         "policy":policy,
@@ -232,7 +262,13 @@ def main() -> None:
         "independent_calibration_kind":independent_kind,
         "consensus_calibrator_comparison":consensus_comparison,
         "consensus_calibration_kind":consensus_kind,
+        "consensus_coefficients":consensus_coefficients,
         "policy":policy,
+        "policy_market_baseline_metrics":policy_market_baseline,
+        "policy_consensus_metrics":policy_consensus_metrics,
+        "policy_consensus_vs_market_delta":metric_delta(policy_consensus_metrics, policy_market_baseline),
+        "test_market_baseline_metrics":test_market_baseline,
+        "test_market_baseline_ece":test_market_ece,
         "test_independent_sport_metrics":test_ind_sport,
         "test_independent_market_metrics":test_ind_market,
         "test_independent_ece":test_ind_ece,
@@ -240,12 +276,11 @@ def main() -> None:
         "test_independent_edge_distribution":edge_distribution(test_market, p_test_market_ind),
         "test_consensus_metrics":test_consensus,
         "test_consensus_ece":test_cons_ece,
-        "test_consensus_edge_distribution":edge_distribution(test_market, p_test_cons),
-        # compatibility for dashboard/shadow readers
+        "test_consensus_vs_market_delta":test_consensus_delta,
         "test_probability_metrics":test_consensus,
         "test_ece":test_cons_ece,
         "test_betting_metrics":test_bets,
-        "methodology":"football model independent of odds; 55/10/10/5/10/10 chronological unique-date blocks; independent sports calibration chosen without market and used for edge/EV; market blend retained only as consensus forecast; policy buffer from out-of-fit independent calibration error, never optimized on ROI; final 10% untouched until evaluation; same-day-safe Elo/league context; promoted teams keep exact-identity history within domestic league family",
+        "methodology":"football model independent of odds; chronological unique-date blocks; independent sports probability is audited but not promoted as betting edge after negative untouched-test ROI; market blend is evaluated only as calibrated consensus and explicitly compared against market-only baseline; thresholds are never selected on final-test ROI; same-day-safe Elo/league context; promoted teams keep exact-identity history within domestic league family",
     }
     META_PATH.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     print(f"Modelo V12 gerado: {MODEL_PATH.stat().st_size/1024/1024:.2f} MB")
