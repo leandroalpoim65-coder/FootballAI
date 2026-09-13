@@ -2,6 +2,11 @@ name: FootballAI Results Cloud
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/update_results_cloud.yml'
   schedule:
     - cron: "25 * * * *"
 
