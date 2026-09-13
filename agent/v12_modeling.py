@@ -108,11 +108,23 @@ def betting_metrics(frame: pd.DataFrame, p: np.ndarray, policy: dict[str, float]
     mask = ((odds >= policy["min_odd"]) & (odds <= policy["max_odd"]) & (edge >= policy["min_edge"]) & (ev >= policy["min_ev"]))
     n = int(mask.sum())
     if n == 0:
-        return {"bets":0,"wins":0,"hit_rate":0.0,"profit":0.0,"roi":0.0,"avg_odd":0.0,"max_drawdown":0.0}
+        return {"bets":0,"wins":0,"hit_rate":0.0,"profit":0.0,"roi":0.0,"avg_odd":0.0,"max_drawdown":0.0,"mean_edge":0.0}
     profits = np.where(y[mask] == 1, odds[mask] - 1.0, -1.0)
     curve = np.cumsum(profits); peaks = np.maximum.accumulate(np.r_[0.0, curve])[:len(curve)]
     max_dd = float(np.max(peaks - curve)) if len(curve) else 0.0
-    return {"bets":n,"wins":int(y[mask].sum()),"hit_rate":float(y[mask].mean()),"profit":float(profits.sum()),"roi":float(profits.mean()),"avg_odd":float(odds[mask].mean()),"max_drawdown":max_dd}
+    return {"bets":n,"wins":int(y[mask].sum()),"hit_rate":float(y[mask].mean()),"profit":float(profits.sum()),"roi":float(profits.mean()),"avg_odd":float(odds[mask].mean()),"max_drawdown":max_dd,"mean_edge":float(edge[mask].mean())}
+
+
+def edge_distribution(frame: pd.DataFrame, p: np.ndarray) -> dict[str, float]:
+    edge = np.asarray(p, dtype=float) - frame.market_probability.to_numpy(dtype=float)
+    return {
+        "mean": float(np.mean(edge)),
+        "p50": float(np.quantile(edge, 0.50)),
+        "p75": float(np.quantile(edge, 0.75)),
+        "p90": float(np.quantile(edge, 0.90)),
+        "p95": float(np.quantile(edge, 0.95)),
+        "max": float(np.max(edge)),
+    }
 
 
 def choose_base(train: pd.DataFrame, select: pd.DataFrame, features: list[str]):
@@ -124,11 +136,17 @@ def choose_base(train: pd.DataFrame, select: pd.DataFrame, features: list[str]):
     return str(rows[0]["model"]), rows
 
 
-def choose_calibrator(base, fit_frame: pd.DataFrame, select_frame: pd.DataFrame, features: list[str]):
+def choose_calibrator(
+    base,
+    fit_frame: pd.DataFrame,
+    select_frame: pd.DataFrame,
+    features: list[str],
+    kinds: tuple[str, ...] = ("sigmoid", "isotonic", "market_blend"),
+):
     raw_fit = probabilities(base, fit_frame[features]); raw_select = probabilities(base, select_frame[features])
     rows = []
     fitted = {}
-    for kind in ("sigmoid", "isotonic", "market_blend"):
+    for kind in kinds:
         calibrator = fit_calibrator(kind, raw_fit, fit_frame)
         p = apply_calibrator(kind, calibrator, raw_select, select_frame)
         row = {"calibrator":kind, **probability_metrics(select_frame.actual_over25, p), "ece":ece(select_frame.actual_over25, p)}
