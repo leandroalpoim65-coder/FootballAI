@@ -45,7 +45,7 @@ jobs:
           python -m py_compile agent_v12_train_cloud.py agent_v12_shadow_cloud.py
 
       - name: Test leakage guards and decision core
-        run: pytest -q tests/test_v12_calibrated.py
+        run: python -m pytest -q tests/test_v12_calibrated.py
 
       - name: Evaluate challenger on feature branch
         if: github.ref != 'refs/heads/main'
