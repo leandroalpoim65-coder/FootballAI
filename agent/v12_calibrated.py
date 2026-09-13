@@ -7,6 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from agent.v12_history import league_family
+
 BASE_SPORT_FEATURES = (
     "home_avg_scored_5", "home_avg_conceded_5", "home_avg_goal_diff_5",
     "home_points_avg_5", "home_win_rate_5", "home_btts_rate_5",
@@ -65,8 +67,10 @@ def devig_market_probability(odd_over: Any, odd_under: Any) -> tuple[float, floa
 
 def _team_long_snapshot(history: pd.DataFrame, league: str, team: str, fixture_date: pd.Timestamp) -> dict[str, float]:
     dates = pd.to_datetime(history["date"], errors="coerce")
+    family = league_family(league)
+    history_families = history["league"].map(league_family)
     rows = history[
-        (history["league"].astype(str) == str(league))
+        (history_families == family)
         & (history["team"].astype(str) == str(team))
         & (dates < fixture_date)
     ].sort_values(["date", "id"])
