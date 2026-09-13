@@ -18,10 +18,6 @@ on:
   schedule:
     - cron: '15 */6 * * *'
 
-concurrency:
-  group: footballai-v12-calibrated-shadow
-  cancel-in-progress: false
-
 jobs:
   v12:
     runs-on: ubuntu-24.04
