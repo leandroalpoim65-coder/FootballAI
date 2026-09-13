@@ -44,3 +44,15 @@ def test_league_context_excludes_same_day_results():
     games = pd.concat([games, extra], ignore_index=True)
     context = league_context(games)
     assert float(context.loc[3,"league_over25_rate_200"]) == float(context.loc[4,"league_over25_rate_200"])
+
+
+def test_team_form_survives_promotion_with_exact_identity():
+    games = pd.DataFrame([
+        {"id":1,"date":pd.Timestamp("2026-01-01"),"league":"England Championship","home_team":"A","away_team":"B","home_goals":1,"away_goals":0,"actual_over25":0},
+        {"id":2,"date":pd.Timestamp("2026-01-08"),"league":"England Championship","home_team":"B","away_team":"A","home_goals":1,"away_goals":2,"actual_over25":1},
+        {"id":3,"date":pd.Timestamp("2026-01-15"),"league":"England Championship","home_team":"A","away_team":"B","home_goals":3,"away_goals":1,"actual_over25":1},
+        {"id":4,"date":pd.Timestamp("2026-08-10"),"league":"England","home_team":"A","away_team":"C","home_goals":0,"away_goals":0,"actual_over25":0},
+    ])
+    history = team_feature_history(games)
+    promoted = history[(history.id == 4) & (history.team == "A")].iloc[0]
+    assert abs(float(promoted.gf5) - 2.0) < 1e-9
