@@ -17,6 +17,26 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown(
+    """
+    <style>
+    .block-container {
+        max-width: 98vw !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-top: 1.2rem !important;
+    }
+    div[data-testid="stDataFrame"] {
+        width: 100% !important;
+    }
+    div[data-testid="stDataFrame"] * {
+        font-size: 0.88rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 LOCAL_TZ = ZoneInfo("Europe/Lisbon")
 DECISIONS_TABLE = "agent_v12_rich_analyst_decisions"
 RUNS_TABLE = "agent_v12_rich_analyst_runs"
@@ -101,23 +121,14 @@ def load_data(tables: set[str]):
     decisions = pd.DataFrame()
     run = pd.DataFrame()
     model = pd.DataFrame()
-
     if DECISIONS_TABLE in tables:
         decisions = query(
-            f"""
-            SELECT * FROM {DECISIONS_TABLE}
-            ORDER BY fixture_date DESC, fixture_time DESC, id DESC
-            """
+            f"SELECT * FROM {DECISIONS_TABLE} ORDER BY fixture_date DESC, fixture_time DESC, id DESC"
         )
-
     if RUNS_TABLE in tables:
         run = query(f"SELECT * FROM {RUNS_TABLE} ORDER BY id DESC LIMIT 1")
-
     if MODEL_TABLE in tables:
-        model = query(
-            f"SELECT * FROM {MODEL_TABLE} ORDER BY registered_at DESC LIMIT 1"
-        )
-
+        model = query(f"SELECT * FROM {MODEL_TABLE} ORDER BY registered_at DESC LIMIT 1")
     return decisions, run, model
 
 
@@ -132,36 +143,61 @@ def result_label(value: Any) -> str:
 def v12_reading(row: pd.Series) -> str:
     delta = safe_float(row.get("rich_market_delta"), 0.0)
     v10 = safe_text(row.get("v10_decision"), "")
-
     if delta >= 0.03:
         if v10 == "BET_SHADOW":
-            return "🟢 V12 reforça"
+            return "🟢 Reforça BET"
         if v10 == "PASS":
-            return "👀 V12 mais otimista"
-        return "🟢 V12 > mercado"
+            return "👀 Mais otimista"
+        return "🟢 Acima mercado"
     if delta <= -0.03:
         if v10 == "BET_SHADOW":
-            return "⚠️ V12 discorda"
+            return "⚠️ Discorda BET"
         if v10 == "PASS":
-            return "🟢 V12 reforça PASS"
-        return "🔻 V12 < mercado"
-    return "⚪ Próximo do mercado"
+            return "🟢 Reforça PASS"
+        return "🔻 Abaixo mercado"
+    return "⚪ Próximo mercado"
 
 
-def display_rows(frame: pd.DataFrame, include_result: bool = True) -> pd.DataFrame:
-    if frame.empty:
-        return frame
-
+def add_labels(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
     out["Jogo"] = (
         out["home_team"].fillna("").astype(str)
         + " vs "
         + out["away_team"].fillna("").astype(str)
     )
-    out["Leitura V12"] = out.apply(v12_reading, axis=1)
-    if include_result:
-        out["Resultado"] = out["result_over25"].apply(result_label)
+    out["Leitura"] = out.apply(v12_reading, axis=1)
+    out["Resultado"] = out["result_over25"].apply(result_label)
+    return out
 
+
+def compact_rows(frame: pd.DataFrame, include_date: bool = False) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    out = add_labels(frame)
+    wanted = []
+    if include_date:
+        wanted.append("fixture_date")
+    wanted += [
+        "fixture_time",
+        "Jogo",
+        "v10_decision",
+        "v10_vote_count",
+        "rich_probability",
+        "market_probability",
+        "rich_market_delta",
+        "odd_over25_open",
+        "Leitura",
+        "Resultado",
+    ]
+    if include_date:
+        wanted.append("counterfactual_profit")
+    return out[[column for column in wanted if column in out.columns]]
+
+
+def detailed_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    out = add_labels(frame)
     wanted = [
         "fixture_date",
         "fixture_time",
@@ -175,36 +211,37 @@ def display_rows(frame: pd.DataFrame, include_result: bool = True) -> pd.DataFra
         "rich_market_delta",
         "odd_over25_open",
         "counterfactual_ev",
-        "Leitura V12",
+        "Leitura",
         "data_quality",
+        "Resultado",
+        "counterfactual_profit",
     ]
-    if include_result:
-        wanted += ["Resultado", "counterfactual_profit"]
     return out[[column for column in wanted if column in out.columns]]
+
+
+def table_height(frame: pd.DataFrame, maximum: int = 1900) -> int:
+    return min(maximum, 42 + len(frame) * 35)
 
 
 def probability_metrics(frame: pd.DataFrame, probability_column: str) -> dict[str, float | None]:
     if frame.empty or probability_column not in frame.columns:
         return {"brier": None, "log_loss": None}
-
     valid = frame[
-        frame["result_over25"].isin([0, 1])
-        & frame[probability_column].notna()
+        frame["result_over25"].isin([0, 1]) & frame[probability_column].notna()
     ].copy()
     if valid.empty:
         return {"brier": None, "log_loss": None}
-
     y = pd.to_numeric(valid["result_over25"], errors="coerce").astype(float)
     p = pd.to_numeric(valid[probability_column], errors="coerce").clip(1e-9, 1 - 1e-9)
-    brier = float(((p - y) ** 2).mean())
-    log_loss = float((-(y * p.map(math.log) + (1 - y) * (1 - p).map(math.log))).mean())
-    return {"brier": brier, "log_loss": log_loss}
+    return {
+        "brier": float(((p - y) ** 2).mean()),
+        "log_loss": float((-(y * p.map(math.log) + (1 - y) * (1 - p).map(math.log))).mean()),
+    }
 
 
 def group_metrics(frame: pd.DataFrame, group_column: str) -> pd.DataFrame:
     if frame.empty or group_column not in frame.columns:
         return pd.DataFrame()
-
     rows: list[dict[str, Any]] = []
     for group, subset in frame.groupby(group_column, dropna=False):
         subset = subset[subset["result_over25"].isin([0, 1])].copy()
@@ -231,20 +268,27 @@ def group_metrics(frame: pd.DataFrame, group_column: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-COLUMN_CONFIG = {
-    "fixture_date": st.column_config.TextColumn("Data"),
-    "fixture_time": st.column_config.TextColumn("Hora"),
-    "league": st.column_config.TextColumn("Liga"),
-    "v10_decision": st.column_config.TextColumn("V10"),
-    "v10_vote_count": st.column_config.NumberColumn("Votos", format="%d"),
-    "v10_vote_signature": st.column_config.TextColumn("Assinatura"),
-    "rich_probability": st.column_config.NumberColumn("P(V12)", format="%.1%%"),
-    "market_probability": st.column_config.NumberColumn("P(Mercado)", format="%.1%%"),
-    "rich_market_delta": st.column_config.NumberColumn("Δ V12-Mercado", format="%+.1%%"),
-    "odd_over25_open": st.column_config.NumberColumn("Odd", format="%.2f"),
-    "counterfactual_ev": st.column_config.NumberColumn("EV V12", format="%+.1%%"),
-    "counterfactual_profit": st.column_config.NumberColumn("Lucro cf.", format="%+.2fu"),
-    "data_quality": st.column_config.TextColumn("Dados"),
+COMPACT_CONFIG = {
+    "fixture_date": st.column_config.TextColumn("Data", width="small"),
+    "fixture_time": st.column_config.TextColumn("Hora", width="small"),
+    "Jogo": st.column_config.TextColumn("Jogo", width="large"),
+    "v10_decision": st.column_config.TextColumn("V10", width="small"),
+    "v10_vote_count": st.column_config.NumberColumn("Votos", format="%d", width="small"),
+    "rich_probability": st.column_config.NumberColumn("V12", format="%.1%%", width="small"),
+    "market_probability": st.column_config.NumberColumn("Mercado", format="%.1%%", width="small"),
+    "rich_market_delta": st.column_config.NumberColumn("Δ", format="%+.1%%", width="small"),
+    "odd_over25_open": st.column_config.NumberColumn("Odd", format="%.2f", width="small"),
+    "Leitura": st.column_config.TextColumn("Leitura", width="medium"),
+    "Resultado": st.column_config.TextColumn("Resultado", width="small"),
+    "counterfactual_profit": st.column_config.NumberColumn("Lucro cf.", format="%+.2fu", width="small"),
+}
+
+DETAIL_CONFIG = {
+    **COMPACT_CONFIG,
+    "league": st.column_config.TextColumn("Liga", width="medium"),
+    "v10_vote_signature": st.column_config.TextColumn("Assinatura", width="small"),
+    "counterfactual_ev": st.column_config.NumberColumn("EV V12", format="%+.1%%", width="small"),
+    "data_quality": st.column_config.TextColumn("Dados", width="small"),
     "Over rate": st.column_config.NumberColumn("Over rate", format="%.1%%"),
     "P(V12) média": st.column_config.NumberColumn("P(V12) média", format="%.1%%"),
     "P(Mercado) média": st.column_config.NumberColumn("P(Mercado) média", format="%.1%%"),
@@ -288,22 +332,19 @@ d.metric("Versão", safe_text(decisions.iloc[0].get("analyst_version")))
 e.metric("Features", safe_int(decisions.iloc[0].get("feature_count")))
 
 if run_row:
-    seen = safe_int(run_row.get("upcoming_seen"))
-    inserted = safe_int(run_row.get("inserted"))
-    skipped = safe_int(run_row.get("skipped_data"))
-    timing = safe_int(run_row.get("skipped_timing"))
     st.caption(
-        f"Última varredura: {seen} upcoming · {inserted} novos · {skipped} sem dados seguros · {timing} fora do timing pré-jogo."
+        f"Última varredura: {safe_int(run_row.get('upcoming_seen'))} upcoming · "
+        f"{safe_int(run_row.get('inserted'))} novos · "
+        f"{safe_int(run_row.get('skipped_data'))} sem dados seguros · "
+        f"{safe_int(run_row.get('skipped_timing'))} fora do timing pré-jogo."
     )
 
-main_today, main_results, main_model = st.tabs(
-    ["🎯 Hoje", "📈 Resultados", "🧠 Modelo"]
-)
+main_today, main_results, main_model = st.tabs(["🎯 Hoje", "📈 Resultados", "🧠 Modelo"])
 
 with main_today:
     st.subheader(f"Previsões de hoje · {today}")
     st.caption(
-        "Δ V12-Mercado é apenas a diferença entre as duas probabilidades. A leitura usa ±3 pontos percentuais só para tornar divergências visíveis; não é um sinal de aposta."
+        "Vista compacta para caber no ecrã sem deslocação horizontal. Δ é V12 menos mercado; ±3pp é apenas destaque visual."
     )
     if today_rows.empty:
         st.info("Ainda não há previsões V12 para hoje.")
@@ -315,10 +356,7 @@ with main_today:
         )
         x1, x2, x3, x4 = st.columns(4)
         x1.metric("Jogos", len(today_rows))
-        x2.metric(
-            "V10 BET_SHADOW",
-            int((today_rows["v10_decision"] == "BET_SHADOW").sum()),
-        )
+        x2.metric("V10 BET_SHADOW", int((today_rows["v10_decision"] == "BET_SHADOW").sum()))
         x3.metric(
             "V12 ≥ mercado +3pp",
             int((pd.to_numeric(today_rows["rich_market_delta"], errors="coerce") >= 0.03).sum()),
@@ -327,13 +365,22 @@ with main_today:
             "V12 ≤ mercado -3pp",
             int((pd.to_numeric(today_rows["rich_market_delta"], errors="coerce") <= -0.03).sum()),
         )
+        compact_today = compact_rows(today_rows, include_date=False)
         st.dataframe(
-            display_rows(today_rows, include_result=True),
+            compact_today,
             use_container_width=True,
             hide_index=True,
-            column_config=COLUMN_CONFIG,
-            height=min(760, 38 + len(today_rows) * 35),
+            column_config=COMPACT_CONFIG,
+            height=table_height(compact_today),
         )
+        with st.expander("Ver detalhes completos", expanded=False):
+            st.dataframe(
+                detailed_rows(today_rows),
+                use_container_width=True,
+                hide_index=True,
+                column_config=DETAIL_CONFIG,
+                height=table_height(today_rows),
+            )
 
 with main_results:
     st.subheader("Calibração prospectiva")
@@ -363,11 +410,11 @@ with main_results:
             if rich_metrics["log_loss"] is not None and market_metrics["log_loss"] is not None
             else None
         )
-        st.caption(
-            f"Log Loss V12: {safe_float(rich_metrics['log_loss']):.4f} · "
-            f"Mercado: {safe_float(market_metrics['log_loss']):.4f} · "
-            f"ganho: {ll_gain:+.4f}" if ll_gain is not None else "Log Loss ainda indisponível."
-        )
+        if ll_gain is not None:
+            st.caption(
+                f"Log Loss V12: {safe_float(rich_metrics['log_loss']):.4f} · "
+                f"Mercado: {safe_float(market_metrics['log_loss']):.4f} · ganho: {ll_gain:+.4f}"
+            )
 
         st.markdown("#### V12 dentro das decisões V10")
         grouped = group_metrics(resolved, "v10_decision")
@@ -376,17 +423,26 @@ with main_results:
                 grouped,
                 use_container_width=True,
                 hide_index=True,
-                column_config=COLUMN_CONFIG,
+                column_config=DETAIL_CONFIG,
             )
 
         st.markdown("#### Jogos resolvidos")
+        resolved_compact = compact_rows(resolved.head(300), include_date=True)
         st.dataframe(
-            display_rows(resolved.head(300), include_result=True),
+            resolved_compact,
             use_container_width=True,
             hide_index=True,
-            column_config=COLUMN_CONFIG,
+            column_config=COMPACT_CONFIG,
+            height=table_height(resolved_compact),
         )
-
+        with st.expander("Ver detalhes completos dos resolvidos", expanded=False):
+            st.dataframe(
+                detailed_rows(resolved.head(300)),
+                use_container_width=True,
+                hide_index=True,
+                column_config=DETAIL_CONFIG,
+                height=table_height(resolved.head(300)),
+            )
         st.caption(
             "Lucro cf. é contrafactual: assume 1u no Over em todos os jogos mostrados. A V12 Rich não está a emitir apostas."
         )
@@ -401,13 +457,11 @@ with main_model:
         m2.metric("Features", safe_int(model_row.get("feature_count")))
         m3.metric("Treino", safe_int(model_row.get("train_n")))
         m4.metric("Calibração", safe_int(model_row.get("calibration_n")))
-
         st.markdown(
             f"**Treino até:** {safe_text(model_row.get('base_train_end'))}  \n"
             f"**Calibração até:** {safe_text(model_row.get('calibration_end'))}  \n"
             f"**Fingerprint:** `{safe_text(model_row.get('training_fingerprint'))}`"
         )
-
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Brier calibração", f"{safe_float(model_row.get('calibration_brier')):.4f}")
         c2.metric("Log Loss calibração", f"{safe_float(model_row.get('calibration_log_loss')):.4f}")
