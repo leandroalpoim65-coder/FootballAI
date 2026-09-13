@@ -9,6 +9,33 @@ HOME_ADVANTAGE_ELO = 65.0
 ELO_K = 20.0
 
 
+KNOWN_LEAGUE_FAMILIES = {
+    "England": "England",
+    "England Championship": "England",
+    "England League One": "England",
+    "England League Two": "England",
+    "Spain": "Spain",
+    "Spain Segunda Division": "Spain",
+    "Italy": "Italy",
+    "Italy Serie B": "Italy",
+    "Germany": "Germany",
+    "Germany 2 Bundesliga": "Germany",
+    "France": "France",
+    "France Ligue 2": "France",
+    "Scotland Premiership": "Scotland",
+    "Belgium First Division A": "Belgium",
+    "Turkey Super Lig": "Turkey",
+    "Greece Super League": "Greece",
+    "Netherlands": "Netherlands",
+    "Portugal": "Portugal",
+}
+
+
+def league_family(value: object) -> str:
+    league = str(value or "").strip()
+    return KNOWN_LEAGUE_FAMILIES.get(league, league)
+
+
 def _roll(series: pd.Series, window: int, minimum: int) -> pd.Series:
     return series.shift(1).rolling(window=window, min_periods=minimum).mean()
 
@@ -25,6 +52,7 @@ def team_feature_history(matches: pd.DataFrame) -> pd.DataFrame:
         "gf": matches.away_goals, "ga": matches.home_goals,
     })
     h = pd.concat([home, away], ignore_index=True)
+    h["family"] = h["league"].map(league_family)
     h["gd"] = h.gf - h.ga
     h["win"] = (h.gd > 0).astype(int)
     h["draw"] = (h.gd == 0).astype(int)
@@ -33,9 +61,11 @@ def team_feature_history(matches: pd.DataFrame) -> pd.DataFrame:
     h["over25"] = ((h.gf + h.ga) >= 3).astype(int)
     h["scored"] = (h.gf > 0).astype(int)
     h["cs"] = (h.ga == 0).astype(int)
-    h = h.sort_values(["league", "team", "date", "id"]).reset_index(drop=True)
+    h = h.sort_values(["family", "team", "date", "id"]).reset_index(drop=True)
 
-    group = h.groupby(["league", "team"], sort=False)
+    # General team form survives promotion/relegation inside the same domestic
+    # football family. Team identity remains exact; there is no fuzzy matching.
+    group = h.groupby(["family", "team"], sort=False)
     for col in ("gf", "ga", "gd", "points", "win", "btts", "over25", "scored", "cs"):
         h[f"{col}5"] = group[col].transform(lambda s: _roll(s, 5, 3))
     for col in ("gf", "ga", "over25", "btts"):
@@ -43,7 +73,7 @@ def team_feature_history(matches: pd.DataFrame) -> pd.DataFrame:
     previous = group["date"].shift(1)
     h["rest"] = (h.date - previous).dt.days.clip(0, 60)
 
-    venue = h.groupby(["league", "team", "venue"], sort=False)
+    venue = h.groupby(["family", "team", "venue"], sort=False)
     for col in ("gf", "ga", "points"):
         values = venue[col].transform(lambda s: _roll(s, 5, 2))
         h[f"v_{col}5"] = values.fillna(h[f"{col}5"])
@@ -57,13 +87,15 @@ def prematch_elo(matches: pd.DataFrame) -> pd.DataFrame:
     for _, games in ordered.groupby("date", sort=True):
         pending = []
         for row in games.itertuples():
-            hk = (str(row.league), str(row.home_team))
-            ak = (str(row.league), str(row.away_team))
+            family = league_family(row.league)
+            hk = (family, str(row.home_team))
+            ak = (family, str(row.away_team))
             hr = float(ratings[hk]); ar = float(ratings[ak])
             out.loc[row.Index] = [hr, ar]
             exp = 1.0 / (1.0 + 10.0 ** ((ar - (hr + HOME_ADVANTAGE_ELO)) / 400.0))
             actual = 1.0 if row.home_goals > row.away_goals else 0.0 if row.home_goals < row.away_goals else 0.5
             pending.append((hk, ak, hr, ar, exp, actual))
+        # Freeze all games on the same calendar date before applying results.
         for hk, ak, hr, ar, exp, actual in pending:
             ratings[hk] = hr + ELO_K * (actual - exp)
             ratings[ak] = ar + ELO_K * ((1.0 - actual) - (1.0 - exp))
