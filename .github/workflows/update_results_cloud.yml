@@ -8,8 +8,8 @@ on:
     paths:
       - '.github/workflows/update_results_cloud.yml'
   schedule:
-    # Resultados, settlement e relatorio a cada 2 horas em vez de hora a hora.
-    - cron: "25 */2 * * *"
+    # Resultados, settlement e relatorio a cada 3 horas; shadow nao exige settlement imediato.
+    - cron: "25 */3 * * *"
 
 concurrency:
   group: footballai-results-cloud
