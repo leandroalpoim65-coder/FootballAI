@@ -10,6 +10,9 @@ on:
       - 'goal_model_multileague_backtest.py'
       - 'ml/goal_model.py'
 
+permissions:
+  contents: write
+
 # Controlled research workflow: no Turso writes and no production signals.
 concurrency:
   group: footballai-goal-model-multileague-backtest
@@ -34,11 +37,22 @@ jobs:
       - name: Run strict walk-forward multi-league test
         run: python goal_model_multileague_backtest.py
       - name: Upload reports
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: goal-model-multileague-reports
           path: |
             reports/goal_model_multileague_*.csv
             reports/goal_model_multileague_*.json
-          if-no-files-found: warn
+          if-no-files-found: error
+      - name: Persist compact reports
+        run: |
+          git config user.name "footballai-bot"
+          git config user.email "footballai-bot@users.noreply.github.com"
+          git add reports/goal_model_multileague_summary.json \
+                  reports/goal_model_multileague_probability_metrics.csv \
+                  reports/goal_model_multileague_o25_replay.csv \
+                  reports/goal_model_multileague_holdout_strategy.csv \
+                  reports/goal_model_multileague_holdout_by_league.csv
+          git diff --cached --quiet && exit 0
+          git commit -m "Update Goal Model multi-league controlled results"
+          git push
