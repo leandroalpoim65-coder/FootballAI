@@ -71,4 +71,4 @@ jobs:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           GOAL_REPORT_MIN_SAMPLE: "10"
-        run: python goal_model_performance_report_v2_cloud.py
+        run: python goal_model_performance_report_v3_cloud.py
