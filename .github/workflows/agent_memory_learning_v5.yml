@@ -8,9 +8,6 @@ on:
       - "agent_memory_learning_cloud.py"
       - "tests/test_memory_learning.py"
       - ".github/workflows/agent_memory_learning_v5.yml"
-  schedule:
-    # Memoria consolidada uma vez por dia depois do policy learner.
-    - cron: "35 4 * * *"
 
 concurrency:
   group: footballai-agent-learning-v5-memory
