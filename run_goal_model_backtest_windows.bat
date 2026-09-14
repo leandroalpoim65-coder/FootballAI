@@ -1,27 +1,74 @@
 @echo off
-setlocal EnableExtensions
-cd /d "%~dp0"
+setlocal EnableExtensions EnableDelayedExpansion
 
+set "LAUNCHER_DIR=%~dp0"
+set "REPO_DIR="
+
+call :check_repo "%LAUNCHER_DIR%"
+if defined REPO_DIR goto :repo_found
+
+call :check_repo "%USERPROFILE%\FootballAI"
+if defined REPO_DIR goto :repo_found
+call :check_repo "%USERPROFILE%\Desktop\FootballAI"
+if defined REPO_DIR goto :repo_found
+call :check_repo "%USERPROFILE%\Documents\FootballAI"
+if defined REPO_DIR goto :repo_found
+call :check_repo "%USERPROFILE%\Downloads\FootballAI"
+if defined REPO_DIR goto :repo_found
+call :check_repo "%USERPROFILE%\OneDrive\Desktop\FootballAI"
+if defined REPO_DIR goto :repo_found
+call :check_repo "%USERPROFILE%\OneDrive\Documents\FootballAI"
+if defined REPO_DIR goto :repo_found
+
+where git >nul 2>nul
+if not errorlevel 1 (
+    for /f "usebackq delims=" %%R in (`git -C "%LAUNCHER_DIR%" rev-parse --show-toplevel 2^>nul`) do (
+        call :check_repo "%%R"
+        if defined REPO_DIR goto :repo_found
+    )
+)
+
+echo A procurar automaticamente a pasta FootballAI no teu perfil...
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Get-ChildItem -Path $env:USERPROFILE -Filter 'goal_model_multileague_backtest.py' -File -Recurse -ErrorAction SilentlyContinue ^| Select-Object -First 1; if ($f) { $f.DirectoryName }"`) do (
+    call :check_repo "%%R"
+    if defined REPO_DIR goto :repo_found
+)
+
+echo.
+echo ============================================================
+echo ERRO: nao encontrei uma copia completa do repositorio FootballAI.
+echo O ficheiro que abriste esta sozinho ou fora da pasta do projeto.
+echo.
+echo Para executar o teste, a mesma pasta tem de conter:
+echo   goal_model_multileague_backtest.py
+echo   goal_model_multileague_backtest_local.py
+echo   ml\goal_model.py
+echo.
+echo Solucao: atualiza/clona o repositorio FootballAI completo e executa este BAT la dentro.
+echo ============================================================
+pause
+exit /b 1
+
+:repo_found
+cd /d "%REPO_DIR%"
 if not exist "reports" mkdir "reports"
 
 echo ============================================================
-echo FootballAI - Goal Model Multi-League Backtest LOCAL v2
+echo FootballAI - Goal Model Multi-League Backtest LOCAL v3
 echo Nao consome GitHub Actions e nao escreve na Turso.
 echo ============================================================
+echo Repositorio encontrado: %CD%
 echo.
 
 if not exist "goal_model_multileague_backtest.py" (
     echo ERRO: goal_model_multileague_backtest.py nao existe nesta pasta.
-    echo Confirma que estas na raiz do repositorio FootballAI.
     goto :fail
 )
-
 if not exist "goal_model_multileague_backtest_local.py" (
     echo ERRO: falta goal_model_multileague_backtest_local.py.
-    echo O repositorio local esta desatualizado. Faz git pull e volta a tentar.
+    echo Faz git pull na pasta FootballAI e volta a tentar.
     goto :fail
 )
-
 if not exist "ml\goal_model.py" (
     echo ERRO: ml\goal_model.py nao existe nesta pasta.
     goto :fail
@@ -30,17 +77,14 @@ if not exist "ml\goal_model.py" (
 set "PY_CMD="
 py -3.11 -c "import sys" >nul 2>nul
 if not errorlevel 1 set "PY_CMD=py -3.11"
-
 if not defined PY_CMD (
     py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
     if not errorlevel 1 set "PY_CMD=py -3"
 )
-
 if not defined PY_CMD (
     python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
     if not errorlevel 1 set "PY_CMD=python"
 )
-
 if not defined PY_CMD (
     echo ERRO: Python 3.10 ou superior nao foi encontrado.
     echo Instala Python 3.11 e ativa a opcao Add Python to PATH.
@@ -54,7 +98,6 @@ if errorlevel 1 goto :fail
 echo.
 set "VENV=.venv_goal_backtest"
 set "VPY=%VENV%\Scripts\python.exe"
-
 if exist "%VPY%" (
     "%VPY%" -c "import sys" >nul 2>nul
     if errorlevel 1 (
@@ -62,7 +105,6 @@ if exist "%VPY%" (
         rmdir /s /q "%VENV%"
     )
 )
-
 if not exist "%VPY%" (
     echo [1/4] A criar ambiente virtual isolado...
     %PY_CMD% -m venv "%VENV%"
@@ -95,6 +137,12 @@ echo Relatorios: %CD%\reports
 echo ============================================================
 start "" "%CD%\reports"
 pause
+exit /b 0
+
+:check_repo
+if exist "%~1\goal_model_multileague_backtest.py" (
+    if exist "%~1\ml\goal_model.py" set "REPO_DIR=%~1"
+)
 exit /b 0
 
 :fail
