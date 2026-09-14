@@ -1,0 +1,46 @@
+name: FootballAI Goal Model Controlled Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      per_league:
+        description: "Número de jogos recentes por liga para o walk-forward"
+        required: false
+        default: "40"
+      paper_limit:
+        description: "Máximo de paper trades resolvidos para o replay com odds reais"
+        required: false
+        default: "500"
+
+concurrency:
+  group: footballai-goal-model-controlled-test
+  cancel-in-progress: false
+
+jobs:
+  controlled-backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile controlled backtest
+        run: python -m py_compile goal_model_controlled_backtest_cloud.py ml/goal_model.py
+
+      - name: Run controlled walk-forward backtest
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          GOAL_CONTROL_PER_LEAGUE: ${{ inputs.per_league }}
+          GOAL_CONTROL_PAPER_LIMIT: ${{ inputs.paper_limit }}
+        run: python goal_model_controlled_backtest_cloud.py
