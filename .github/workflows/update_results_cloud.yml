@@ -17,7 +17,7 @@ concurrency:
 jobs:
   update-results:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -57,27 +57,3 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
         run: python finalize_closing_quality_v2_cloud.py
-
-      # Keep the result propagation in one guaranteed order. Independent
-      # scheduled workflows remain as recovery runs, but freshness no longer
-      # depends on GitHub cron jobs starting in the expected minute.
-      - name: Propagate results to Champion V10
-        id: v10
-        env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python agent_v10_universe_cloud.py
-
-      - name: Refresh Outcome Learner V11
-        id: v11
-        env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python agent_outcome_learning_v11_cloud.py
-
-      - name: Propagate results to V12 Rich Analyst
-        if: ${{ always() && steps.v10.outcome == 'success' }}
-        env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python agent_v12_rich_resilient_cloud.py
