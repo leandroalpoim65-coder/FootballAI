@@ -1,0 +1,43 @@
+name: FootballAI Goal Model Multi-League Backtest
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/goal_model_multileague_backtest.yml'
+      - 'goal_model_multileague_backtest.py'
+      - 'ml/goal_model.py'
+
+concurrency:
+  group: footballai-goal-model-multileague-backtest
+  cancel-in-progress: true
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile
+        run: python -m py_compile goal_model_multileague_backtest.py ml/goal_model.py
+      - name: Run strict walk-forward multi-league test
+        run: python goal_model_multileague_backtest.py
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goal-model-multileague-reports
+          path: |
+            reports/goal_model_multileague_*.csv
+            reports/goal_model_multileague_*.json
+          if-no-files-found: warn
