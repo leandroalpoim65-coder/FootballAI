@@ -54,7 +54,7 @@ cd /d "%REPO_DIR%"
 if not exist "reports" mkdir "reports"
 
 echo ============================================================
-echo FootballAI - Goal Model Multi-League Backtest LOCAL v3
+echo FootballAI - Goal Model Multi-League Backtest LOCAL v4
 echo Nao consome GitHub Actions e nao escreve na Turso.
 echo ============================================================
 echo Repositorio encontrado: %CD%
@@ -66,7 +66,7 @@ if not exist "goal_model_multileague_backtest.py" (
 )
 if not exist "goal_model_multileague_backtest_local.py" (
     echo ERRO: falta goal_model_multileague_backtest_local.py.
-    echo Faz git pull na pasta FootballAI e volta a tentar.
+    echo Atualiza a copia local do FootballAI e volta a tentar.
     goto :fail
 )
 if not exist "ml\goal_model.py" (
@@ -75,23 +75,34 @@ if not exist "ml\goal_model.py" (
 )
 
 set "PY_CMD="
-py -3.11 -c "import sys" >nul 2>nul
-if not errorlevel 1 set "PY_CMD=py -3.11"
+python -c "import sys; print('FOOTBALLAI_OK' if sys.version_info[:2] in [(3,10),(3,11),(3,12),(3,13),(3,14),(3,15)] else 'NO')" 2>nul | findstr /x /c:"FOOTBALLAI_OK" >nul
+if not errorlevel 1 set "PY_CMD=python"
+
 if not defined PY_CMD (
-    py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
+    py -3.11 -c "print('FOOTBALLAI_OK')" 2>nul | findstr /x /c:"FOOTBALLAI_OK" >nul
+    if not errorlevel 1 set "PY_CMD=py -3.11"
+)
+
+if not defined PY_CMD (
+    py -3 -c "import sys; print('FOOTBALLAI_OK' if sys.version_info[:2] in [(3,10),(3,11),(3,12),(3,13),(3,14),(3,15)] else 'NO')" 2>nul | findstr /x /c:"FOOTBALLAI_OK" >nul
     if not errorlevel 1 set "PY_CMD=py -3"
 )
+
 if not defined PY_CMD (
-    python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
-    if not errorlevel 1 set "PY_CMD=python"
-)
-if not defined PY_CMD (
-    echo ERRO: Python 3.10 ou superior nao foi encontrado.
-    echo Instala Python 3.11 e ativa a opcao Add Python to PATH.
+    echo ERRO: nao existe um runtime Python 3.10+ instalado.
+    echo O launcher 'py' pode existir sem ter o Python instalado.
+    echo.
+    echo Executa este comando numa janela CMD:
+    echo     py install 3.11
+    echo.
+    echo Depois confirma com:
+    echo     py -3.11 --version
+    echo.
+    echo E volta a executar este BAT.
     goto :fail
 )
 
-echo Python encontrado:
+echo Python encontrado e validado:
 %PY_CMD% --version
 if errorlevel 1 goto :fail
 
