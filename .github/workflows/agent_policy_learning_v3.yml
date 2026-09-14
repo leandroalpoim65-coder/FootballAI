@@ -14,9 +14,6 @@ on:
       - "tests/test_policy_learning.py"
       - "tests/test_agent_chat.py"
       - ".github/workflows/agent_policy_learning_v3.yml"
-  schedule:
-    # Corre depois da consolidacao diaria de performance.
-    - cron: "15 4 * * *"
 
 concurrency:
   group: footballai-autonomous-policy-learner-v3
