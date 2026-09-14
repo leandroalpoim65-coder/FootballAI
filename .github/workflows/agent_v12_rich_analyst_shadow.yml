@@ -20,7 +20,8 @@ on:
       - 'tests/test_v12_rich_production.py'
       - '.github/workflows/agent_v12_rich_analyst_shadow.yml'
   schedule:
-    - cron: '58 * * * *'
+    # Shadow prospetivo duas vezes por dia; mantem cobertura sem repetir o mesmo universo hora a hora.
+    - cron: '58 1,13 * * *'
 
 jobs:
   rich-analyst:
