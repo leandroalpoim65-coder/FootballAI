@@ -78,6 +78,12 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python paper_trade_uefa_cloud.py
 
+      - name: Run multi-market Goal Model shadow
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python goal_model_shadow_cloud.py
+
       - name: Notify new signals on Telegram
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
