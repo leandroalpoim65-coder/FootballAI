@@ -3,8 +3,8 @@ name: FootballAI Agent Performance Monitor V2
 on:
   workflow_dispatch:
   schedule:
-    # Corre depois do Results Cloud (:25) e do agente (:45 em 00/12 UTC).
-    - cron: "5 1,13 * * *"
+    # Uma consolidacao diaria e suficiente para performance historica/shadow.
+    - cron: "5 4 * * *"
 
 concurrency:
   group: footballai-agent-performance-monitor-v2
