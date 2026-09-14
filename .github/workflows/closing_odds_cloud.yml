@@ -3,7 +3,13 @@ name: FootballAI Closing Odds Cloud
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    # Mantem maior cobertura nas horas tipicas de futebol europeu e reduz a madrugada.
+    # Dias uteis: 30 em 30 min entre 16:20 e 22:50 UTC.
+    - cron: "20,50 16-22 * * 1-5"
+    # Fim de semana: 30 em 30 min entre 10:20 e 22:50 UTC.
+    - cron: "20,50 10-22 * * 0,6"
+    # Snapshots de seguranca fora das janelas principais.
+    - cron: "50 0,4,8,12 * * *"
 
 concurrency:
   group: footballai-closing-odds-cloud
