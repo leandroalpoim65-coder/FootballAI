@@ -15,9 +15,8 @@ on:
       - "tests/test_agent_chat.py"
       - ".github/workflows/agent_policy_learning_v3.yml"
   schedule:
-    # Performance Monitor corre às 01:05/13:05 UTC.
-    # O learner usa depois os resultados já consolidados.
-    - cron: "15 1,13 * * *"
+    # Corre depois da consolidacao diaria de performance.
+    - cron: "15 4 * * *"
 
 concurrency:
   group: footballai-autonomous-policy-learner-v3
