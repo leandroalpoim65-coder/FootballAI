@@ -41,7 +41,30 @@ def load_upcoming_future_only(connection, horizon_days: int) -> list[dict]:
     return [row for row in rows if _fixture_is_future(row)]
 
 
+def odds_api_quota_safe(api_key: str) -> tuple[set[str], int | None]:
+    payload, headers = collector.http_get_json(
+        f"{collector.ODDS_API_BASE_URL}/sports/?apiKey={api_key}"
+    )
+    active: set[str] = set()
+    if isinstance(payload, list):
+        for item in payload:
+            if (
+                isinstance(item, dict)
+                and item.get("active") is True
+                and item.get("key")
+            ):
+                active.add(str(item["key"]))
+
+    try:
+        remaining = int(headers.get("x-requests-remaining"))
+    except (TypeError, ValueError):
+        remaining = None
+
+    return active, remaining
+
+
 collector.load_upcoming = load_upcoming_future_only
+collector.odds_api_quota = odds_api_quota_safe
 
 
 if __name__ == "__main__":
