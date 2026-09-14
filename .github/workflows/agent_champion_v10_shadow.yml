@@ -15,9 +15,8 @@ on:
       - 'requirements.txt'
       - '.github/workflows/agent_champion_v10_shadow.yml'
   schedule:
-    # Results Cloud corre aos :25; V10 passa 20 min depois para congelar novos jogos
-    # e absorver resultados acabados sem esperar pelo ciclo seguinte de meio dia.
-    - cron: "45 * * * *"
+    # Upcoming Cloud refresca a lista as 00:05/12:05 UTC; o shadow corre depois.
+    - cron: "45 0,12 * * *"
   pull_request:
     paths:
       - 'agent/champion_v10.py'
