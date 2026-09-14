@@ -78,11 +78,31 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python paper_trade_uefa_cloud.py
 
+      - name: Collect multi-market pre-match odds
+        continue-on-error: true
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          MULTI_MARKET_HORIZON_DAYS: "3"
+          MULTI_MARKET_API_FOOTBALL_MAX_REQUESTS: "24"
+          MULTI_MARKET_ODDS_API_RESERVE: "100"
+          MULTI_MARKET_ODDS_API_MAX_EVENTS: "6"
+        run: python multi_market_odds_guarded_cloud.py
+
       - name: Run multi-market Goal Model shadow
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python goal_model_shadow_cloud.py
+
+      - name: Rank Goal Model value across markets
+        continue-on-error: true
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python goal_model_value_shadow_cloud.py
 
       - name: Notify new signals on Telegram
         env:
