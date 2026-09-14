@@ -97,12 +97,12 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python goal_model_shadow_cloud.py
 
-      - name: Rank Goal Model value across markets
+      - name: Rank Goal Model value across calibrated markets
         continue-on-error: true
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python goal_model_value_shadow_cloud.py
+        run: python goal_model_value_shadow_v2_cloud.py
 
       - name: Notify new signals on Telegram
         env:
