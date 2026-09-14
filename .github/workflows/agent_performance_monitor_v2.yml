@@ -2,9 +2,6 @@ name: FootballAI Agent Performance Monitor V2
 
 on:
   workflow_dispatch:
-  schedule:
-    # Uma consolidacao diaria e suficiente para performance historica/shadow.
-    - cron: "5 4 * * *"
 
 concurrency:
   group: footballai-agent-performance-monitor-v2
