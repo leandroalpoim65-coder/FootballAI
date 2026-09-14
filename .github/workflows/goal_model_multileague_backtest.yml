@@ -10,6 +10,7 @@ on:
       - 'goal_model_multileague_backtest.py'
       - 'ml/goal_model.py'
 
+# Controlled research workflow: no Turso writes and no production signals.
 concurrency:
   group: footballai-goal-model-multileague-backtest
   cancel-in-progress: true
