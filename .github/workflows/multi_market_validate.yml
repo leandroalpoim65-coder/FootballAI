@@ -1,0 +1,67 @@
+name: FootballAI Multi-Market Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'multi_market_odds_cloud.py'
+      - 'multi_market_odds_guarded_cloud.py'
+      - 'goal_model_value_shadow_cloud.py'
+      - 'goal_model_shadow_cloud.py'
+      - 'ml/goal_model.py'
+      - '.github/workflows/multi_market_validate.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile multi-market modules
+        run: |
+          python -m py_compile \
+            multi_market_odds_cloud.py \
+            multi_market_odds_guarded_cloud.py \
+            goal_model_shadow_cloud.py \
+            goal_model_value_shadow_cloud.py \
+            ml/goal_model.py
+
+      - name: Import modules without side effects
+        run: |
+          python - <<'PY'
+          import multi_market_odds_cloud
+          import multi_market_odds_guarded_cloud
+          import goal_model_shadow_cloud
+          import goal_model_value_shadow_cloud
+          print('imports ok')
+          PY
+
+      - name: Goal model smoke test
+        run: python ml/goal_model.py
+
+      - name: Asian settlement checks
+        run: |
+          python - <<'PY'
+          from goal_model_value_shadow_cloud import settlement_coefficient
+
+          assert settlement_coefficient(3, 2.25, 'over') == 1.0
+          assert settlement_coefficient(2, 2.25, 'over') == -0.5
+          assert settlement_coefficient(3, 2.75, 'under') == -0.5
+          assert settlement_coefficient(2, 2.75, 'under') == 1.0
+          assert settlement_coefficient(3, 3.0, 'over') == 0.0
+          print('asian settlement ok')
+          PY
