@@ -2,18 +2,11 @@ name: FootballAI Goal Model Multi-League Backtest
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/goal_model_multileague_backtest.yml'
-      - 'goal_model_multileague_backtest.py'
-      - 'ml/goal_model.py'
 
 permissions:
   contents: write
 
-# Controlled research workflow: no Turso writes and no production signals.
+# Controlled research workflow: manual only so historical research never burns recurring Actions quota.
 concurrency:
   group: footballai-goal-model-multileague-backtest
   cancel-in-progress: true
