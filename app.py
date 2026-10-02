@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
+import os
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import libsql
 
 
 st.set_page_config(
@@ -15,7 +16,6 @@ st.set_page_config(
 )
 
 ROOT_DIR = Path(__file__).resolve().parent
-DATABASE_PATH = ROOT_DIR / "database" / "football.db"
 SHADOW_TABLE = "goal_model_home_o25_shadow"
 
 
@@ -59,16 +59,26 @@ def fmt_date(value: object) -> str:
 
 
 def load_shadow() -> pd.DataFrame:
-    if not DATABASE_PATH.exists():
+    url = os.getenv("TURSO_DATABASE_URL")
+    token = os.getenv("TURSO_AUTH_TOKEN")
+    if not url or not token:
+        st.error(
+            "Credenciais Turso não encontradas nesta sessão do Windows. "
+            "Define TURSO_DATABASE_URL e TURSO_AUTH_TOKEN e reinicia a app."
+        )
         return pd.DataFrame()
-    with sqlite3.connect(DATABASE_PATH) as connection:
+    try:
+        connection = libsql.connect(database=url, auth_token=token)
         try:
             return pd.read_sql_query(
                 f"SELECT * FROM {SHADOW_TABLE} ORDER BY fixture_date, fixture_time",
                 connection,
             )
-        except Exception:
-            return pd.DataFrame()
+        finally:
+            connection.close()
+    except Exception as exc:
+        st.error(f"Não foi possível ler o Turso: {exc}")
+        return pd.DataFrame()
 
 
 def latest_model_rows(data: pd.DataFrame) -> pd.DataFrame:
@@ -141,9 +151,12 @@ def build_game_view(data: pd.DataFrame) -> pd.DataFrame:
 
 st.title("⚽ FootballAI — Análise de Jogos")
 st.caption(
-    "Painel estatístico para comparar modelo e mercado. "
+    "Painel estatístico ligado diretamente ao Turso. "
     "Os dados servem para análise/paper trading; a decisão final é tua."
 )
+
+if st.button("🔄 Atualizar dados do Turso"):
+    st.rerun()
 
 
 # ------------------------------------------------------------
