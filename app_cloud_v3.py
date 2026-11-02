@@ -4,10 +4,10 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import libsql
 import numpy as np
 import pandas as pd
 import streamlit as st
+from libsql_client import create_client_sync
 from sklearn.metrics import roc_auc_score
 
 TZ = ZoneInfo("Europe/Lisbon")
@@ -63,15 +63,20 @@ def connect():
     url, token = read_setting("TURSO_DATABASE_URL"), read_setting("TURSO_AUTH_TOKEN")
     if not url or not token:
         raise RuntimeError("TURSO_DATABASE_URL/TURSO_AUTH_TOKEN not configured.")
-    return libsql.connect(database=url, auth_token=token)
+    if url.startswith("libsql://"):
+        url = "https://" + url.removeprefix("libsql://")
+    return create_client_sync(url, auth_token=token)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def query(sql: str, params: tuple = ()) -> pd.DataFrame:
     conn = connect()
     try:
-        cur = conn.execute(sql, params)
-        return pd.DataFrame(cur.fetchall(), columns=[c[0] for c in (cur.description or [])])
+        result = conn.execute(sql, params or None)
+        return pd.DataFrame(
+            [row.astuple() for row in result.rows],
+            columns=result.columns,
+        )
     finally:
         conn.close()
 

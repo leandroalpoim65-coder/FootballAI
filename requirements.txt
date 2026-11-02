@@ -1,5 +1,6 @@
 joblib
-libsql
+libsql-client
+libsql; sys_platform != "win32"
 numpy
 pandas
 scikit-learn==1.9.0

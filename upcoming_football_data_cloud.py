@@ -8,9 +8,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-import libsql
 import numpy as np
 import pandas as pd
+from libsql_client import create_client_sync
 
 from ml.paper_trade import normalize_league, normalize_team
 from upcoming_fallback_sources import fetch_emergency_upcoming
@@ -55,7 +55,9 @@ def connect_turso():
         raise RuntimeError("TURSO_DATABASE_URL não configurada.")
     if not token:
         raise RuntimeError("TURSO_AUTH_TOKEN não configurado.")
-    return libsql.connect(database=url, auth_token=token)
+    if url.startswith("libsql://"):
+        url = "https://" + url.removeprefix("libsql://")
+    return create_client_sync(url, auth_token=token)
 
 
 def ensure_table(connection) -> None:
@@ -85,7 +87,6 @@ def ensure_table(connection) -> None:
         ON {TABLE_NAME}(date, active)
         """
     )
-    connection.commit()
 
 
 def http_get_bytes(
@@ -366,14 +367,19 @@ def persist_observations(
 
     for item in observations:
         key = str(item["fixture_key"])
-        existing = connection.execute(
+        existing_result = connection.execute(
             f"""
             SELECT odd_over25_open, odd_under25_open
             FROM {TABLE_NAME}
             WHERE fixture_key = ?
             """,
             (key,),
-        ).fetchone()
+        )
+        existing = (
+            existing_result.rows[0].astuple()
+            if existing_result.rows
+            else None
+        )
 
         if existing is None:
             connection.execute(
@@ -439,7 +445,6 @@ def persist_observations(
         updated += 1
         preserved_open += 1
 
-    connection.commit()
     return created, updated, preserved_open
 
 
@@ -453,7 +458,6 @@ def deactivate_past(connection, today_iso: str) -> None:
         """,
         (today_iso,),
     )
-    connection.commit()
 
 
 def main() -> None:
@@ -545,7 +549,7 @@ def main() -> None:
 
         deactivate_past(connection, today.strftime("%Y-%m-%d"))
 
-        total_active = connection.execute(
+        total_active_result = connection.execute(
             f"""
             SELECT COUNT(*)
             FROM {TABLE_NAME}
@@ -553,7 +557,8 @@ def main() -> None:
               AND date >= ?
             """,
             (today.strftime("%Y-%m-%d"),),
-        ).fetchone()[0]
+        )
+        total_active = total_active_result.rows[0][0]
 
         print()
         print("==========================================")
