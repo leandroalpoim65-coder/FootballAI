@@ -15,18 +15,43 @@ THRESHOLD = 0.55
 SHADOW = [0.40, 0.45, 0.50, 0.525, 0.55]
 
 st.set_page_config(page_title="FootballAI Cloud", page_icon="⚽", layout="wide")
-st.markdown("""
-<style>
-.block-container{padding-top:.8rem;padding-bottom:2rem;max-width:1500px}
-[data-testid="stMetric"]{border:1px solid rgba(128,128,128,.22);border-radius:14px;padding:.75rem 1rem;background:rgba(128,128,128,.04)}
-[data-testid="stMetricLabel"]{font-weight:650}
-[data-testid="stMetricValue"]{font-size:1.55rem}
-@media(max-width:700px){.block-container{padding-left:.65rem;padding-right:.65rem;padding-top:.55rem}[data-testid="stMetricValue"]{font-size:1.25rem}}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+        .block-container {
+            padding-top: .8rem;
+            padding-bottom: 2rem;
+            max-width: 1600px;
+        }
+        [data-testid="stMetric"] {
+            border: 1px solid rgba(128, 128, 128, .22);
+            border-radius: 14px;
+            padding: .75rem 1rem;
+            background: rgba(128, 128, 128, .04);
+        }
+        [data-testid="stMetricLabel"] {
+            font-weight: 650;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.55rem;
+        }
+        @media (max-width: 700px) {
+            .block-container {
+                padding-left: .65rem;
+                padding-right: .65rem;
+                padding-top: .55rem;
+            }
+            [data-testid="stMetricValue"] {
+                font-size: 1.25rem;
+            }
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
-def setting(name: str) -> str:
+def read_setting(name: str) -> str:
     try:
         value = st.secrets[name]
     except Exception:
@@ -35,9 +60,9 @@ def setting(name: str) -> str:
 
 
 def connect():
-    url, token = setting("TURSO_DATABASE_URL"), setting("TURSO_AUTH_TOKEN")
+    url, token = read_setting("TURSO_DATABASE_URL"), read_setting("TURSO_AUTH_TOKEN")
     if not url or not token:
-        raise RuntimeError("TURSO_DATABASE_URL/TURSO_AUTH_TOKEN não configurados.")
+        raise RuntimeError("TURSO_DATABASE_URL/TURSO_AUTH_TOKEN not configured.")
     return libsql.connect(database=url, auth_token=token)
 
 
@@ -58,7 +83,7 @@ def tables() -> set[str]:
 
 
 def pct(x, d=1):
-    return "—" if x is None or pd.isna(x) else f"{float(x)*100:.{d}f}%"
+    return "—" if x is None or pd.isna(x) else f"{float(x) * 100:.{d}f}%"
 
 
 def units(x):
@@ -66,7 +91,7 @@ def units(x):
 
 
 def euros(x, unit):
-    return "—" if x is None or pd.isna(x) else f"€{float(x)*unit:+,.2f}".replace(",", " ")
+    return "—" if x is None or pd.isna(x) else f"€{float(x) * unit:+,.2f}".replace(",", " ")
 
 
 def numeric(df, cols):
@@ -107,11 +132,21 @@ BADGES = {
 def prep_paper(df):
     if df.empty:
         return df
-    out = numeric(df, [
-        "odd_over25_open", "odd_under25_open", "odd_over25_close",
-        "odd_under25_close", "clv_probability", "signal", "planned_stake",
-        "profit", "result_over25", "closing_minutes_before_kickoff",
-    ])
+    out = numeric(
+        df,
+        [
+            "odd_over25_open",
+            "odd_under25_open",
+            "odd_over25_close",
+            "odd_under25_close",
+            "clv_probability",
+            "signal",
+            "planned_stake",
+            "profit",
+            "result_over25",
+            "closing_minutes_before_kickoff",
+        ],
+    )
     out["status"] = out.get("status", "OPEN").fillna("OPEN").astype(str).str.upper()
     out["signal"] = out.get("signal", 0)
     out["clv_probability"] = out.get("clv_probability", np.nan)
@@ -157,7 +192,7 @@ def paper_table(df):
     if df.empty:
         return df
     out = pd.DataFrame(index=df.index)
-    out["Decisão"] = df["signal"].apply(lambda x: "🟢 SINAL" if int(x or 0) == 1 else "⚪ SEM SINAL")
+    out["Decisão"] = df["signal"].apply(lambda x: "🟢 SINAL" if pd.notna(x) and int(x or 0) == 1 else "⚪ SEM SINAL")
     out["Estado"] = df["status"].map({"RESOLVED": "✅ RESOLVIDO", "OPEN": "🟡 OPEN", "VOID": "⚪ VOID / ADIADO"}).fillna(df["status"])
     out["Data"] = df.get("fixture_date", "")
     out["Hora"] = df.get("fixture_time", "")
@@ -187,11 +222,16 @@ def upcoming_table(df):
     out["OPEN"] = df.get("odd_over25_open", np.nan).round(3)
     out["Atual"] = df.get("odd_over25_current", np.nan).round(3)
     out["Fonte"] = df.get("source", "")
+
     def cd(v):
-        if pd.isna(v): return "—"
-        if v < 0: return "iniciado"
-        if v >= 60: return f"{int(v//60)}h {int(v%60)}m"
+        if pd.isna(v):
+            return "—"
+        if v < 0:
+            return "iniciado"
+        if v >= 60:
+            return f"{int(v // 60)}h {int(v % 60)}m"
         return f"{max(0, int(v))} min"
+
     out["Faltam"] = df["minutes_to_kickoff"].apply(cd)
     return out.reset_index(drop=True)
 
@@ -202,17 +242,19 @@ def threshold_test(df):
     for t in SHADOW:
         pick = usable[usable["clv_probability"] >= t]
         n = len(pick)
-        rows.append({
-            "threshold": t,
-            "Threshold": f"{t*100:.1f}%" if np.isclose(t, .525) else f"{t*100:.0f}%",
-            "Tipo": "ATUAL" if np.isclose(t, THRESHOLD) else "SHADOW",
-            "Jogos": n,
-            "Cobertura %": round(100*n/len(usable), 1) if len(usable) else np.nan,
-            "Prob. média %": round(100*pick["clv_probability"].mean(), 1) if n else np.nan,
-            "CLV positivo %": round(100*(pick["clv_display"] > 0).mean(), 1) if n else np.nan,
-            "CLV médio %": round(100*pick["clv_display"].mean(), 2) if n else np.nan,
-            "CLV mediano %": round(100*pick["clv_display"].median(), 2) if n else np.nan,
-        })
+        rows.append(
+            {
+                "threshold": t,
+                "Threshold": f"{t * 100:.1f}%" if np.isclose(t, .525) else f"{t * 100:.0f}%",
+                "Tipo": "ATUAL" if np.isclose(t, THRESHOLD) else "SHADOW",
+                "Jogos": n,
+                "Cobertura %": round(100 * n / len(usable), 1) if len(usable) else np.nan,
+                "Prob. média %": round(100 * pick["clv_probability"].mean(), 1) if n else np.nan,
+                "CLV positivo %": round(100 * (pick["clv_display"] > 0).mean(), 1) if n else np.nan,
+                "CLV médio %": round(100 * pick["clv_display"].mean(), 2) if n else np.nan,
+                "CLV mediano %": round(100 * pick["clv_display"].median(), 2) if n else np.nan,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -221,20 +263,22 @@ def quality_metrics(df):
     if usable.empty:
         return np.nan, np.nan, np.nan
     y = (usable["clv_display"] > 0).astype(int).to_numpy()
-    p = usable["clv_probability"].clip(1e-6, 1-1e-6).to_numpy()
-    brier = float(np.mean((p-y)**2))
-    logloss = float(-np.mean(y*np.log(p) + (1-y)*np.log(1-p)))
+    p = usable["clv_probability"].clip(1e-6, 1 - 1e-6).to_numpy()
+    brier = float(np.mean((p - y) ** 2))
+    logloss = float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
     auc = np.nan
     if len(np.unique(y)) == 2:
-        try: auc = float(roc_auc_score(y, p))
-        except Exception: pass
+        try:
+            auc = float(roc_auc_score(y, p))
+        except Exception:
+            pass
     return brier, logloss, auc
 
 
 try:
     tabs = tables()
 except Exception as exc:
-    st.error("Não foi possível ligar à Turso.")
+    st.error("Unable to connect to Turso.")
     st.code(str(exc))
     st.stop()
 
@@ -243,146 +287,212 @@ upcoming = prep_upcoming(query("SELECT * FROM upcoming_matches WHERE active=1 OR
 history = query("SELECT COUNT(*) total_matches, COUNT(DISTINCT league) total_leagues, MAX(date) latest_match FROM matches") if "matches" in tabs else pd.DataFrame()
 
 st.sidebar.title("⚽ FootballAI")
-page = st.sidebar.radio("Navegação", ["🏠 Resumo", "🎯 Sinais", "🧾 Paper Trades", "📅 Próximos Jogos", "📈 CLV & Performance", "⚙️ Estado do Sistema"], label_visibility="collapsed")
-unit_value = st.sidebar.number_input("Valor por unidade (€)", 1.0, 1000.0, 10.0, 1.0)
+page = st.sidebar.radio(
+    "Navigation",
+    ["🏠 Overview", "🎯 Signals", "🧾 Paper Trades", "📅 Upcoming Matches", "📈 CLV & Performance", "⚙️ System Status"],
+    label_visibility="visible",
+)
+unit_value = st.sidebar.number_input("Value per unit (€)", 1.0, 1000.0, 10.0, 1.0)
 leagues = sorted(paper["league"].dropna().astype(str).unique()) if len(paper) else []
-selected = st.sidebar.multiselect("Filtrar ligas", leagues, default=[], placeholder="Todas as ligas")
-if st.sidebar.button("🔄 Atualizar dados", use_container_width=True):
+selected = st.sidebar.multiselect("Filter leagues", leagues, default=[], placeholder="All leagues")
+if st.sidebar.button("🔄 Refresh data", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
 pv, uv = paper.copy(), upcoming.copy()
 if selected:
-    if len(pv): pv = pv[pv["league"].isin(selected)]
-    if len(uv): uv = uv[uv["league"].isin(selected)]
+    if len(pv):
+        pv = pv[pv["league"].isin(selected)]
+    if len(uv):
+        uv = uv[uv["league"].isin(selected)]
 
 st.title("⚽ FootballAI Cloud")
-st.caption("Paper Trade, odds, resultados e CLV — com qualidade das fontes separada.")
+st.caption("Paper trading, odds, results, and CLV — with source quality separated from the model signal.")
 
-if page == "🏠 Resumo":
+if page == "🏠 Overview":
     if pv.empty:
-        st.info("Ainda não existem Paper Trades.")
+        st.info("There are no paper trades yet.")
     else:
         signals = pv[pv["signal"] == 1]
         resolved = signals[signals["status"] == "RESOLVED"]
         profit = pd.to_numeric(resolved.get("profit", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
         stake = pd.to_numeric(resolved.get("planned_stake", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
         c = st.columns(4)
-        c[0].metric("Paper Trades", len(pv)); c[1].metric("Sinais", len(signals))
-        c[2].metric("OPEN", int((pv["status"]=="OPEN").sum())); c[3].metric("Resolvidos", int((pv["status"]=="RESOLVED").sum()))
+        c[0].metric("Paper trades", len(pv))
+        c[1].metric("Signals", len(signals))
+        c[2].metric("OPEN", int((pv["status"] == "OPEN").sum()))
+        c[3].metric("Resolved", int((pv["status"] == "RESOLVED").sum()))
+
         c = st.columns(4)
-        c[0].metric("✅ CLOSE alta qualidade", int(pv["close_high_quality"].sum()))
-        c[1].metric("🟡 Snapshots provisórias", int((pv["close_group"]=="Snapshot API-Football").sum()))
-        c[2].metric("Lucro sinais", units(profit), euros(profit, unit_value))
-        c[3].metric("ROI sinais", pct(profit/stake if stake > 0 else np.nan))
-        st.subheader("🎯 Sinais mais recentes")
+        c[0].metric("✅ High-quality CLOSE", int(pv["close_high_quality"].sum()))
+        c[1].metric("🟡 Temporary snapshots", int((pv["close_group"] == "Snapshot API-Football").sum()))
+        c[2].metric("Signal profit", units(profit), euros(profit, unit_value))
+        c[3].metric("Signal ROI", pct(profit / stake if stake > 0 else np.nan))
+
+        st.subheader("🎯 Most recent signals")
         st.dataframe(paper_table(signals.head(8)), use_container_width=True, hide_index=True)
-        st.subheader("📅 Próximos jogos")
+
+        st.subheader("📅 Upcoming matches")
         future = uv[uv.get("minutes_to_kickoff", pd.Series(np.nan, index=uv.index)) >= 0].head(10)
         st.dataframe(upcoming_table(future), use_container_width=True, hide_index=True)
 
-elif page == "🎯 Sinais":
-    st.subheader("🎯 Sinais reais do modelo")
-    st.caption("Threshold real congelado em 55%. A análise shadow não altera sinais.")
+elif page == "🎯 Signals":
+    st.subheader("🎯 Real model signals")
+    st.caption("The real threshold is frozen at 55%. The shadow analysis does not change the live signal output.")
     signals = pv[pv["signal"] == 1].copy()
-    mode = st.segmented_control("Estado", ["Todos", "OPEN", "RESOLVED", "VOID"], default="Todos")
-    if mode in {"OPEN", "RESOLVED", "VOID"}: signals = signals[signals["status"] == mode]
+    mode = st.segmented_control("Status", ["All", "OPEN", "RESOLVED", "VOID"], default="All")
+    if mode in {"OPEN", "RESOLVED", "VOID"}:
+        signals = signals[signals["status"] == mode]
     st.dataframe(paper_table(signals), use_container_width=True, hide_index=True)
 
 elif page == "🧾 Paper Trades":
-    st.subheader("🧾 Paper Trades")
-    c1,c2,c3,c4 = st.columns(4)
-    statuses = c1.multiselect("Estado", ["OPEN","RESOLVED","VOID"], default=[], placeholder="Todos")
-    only_signals = c2.toggle("Só sinais")
-    ctype = c3.selectbox("Tipo CLOSE", ["Todas","CLOSE pré-jogo","CLOSE Football-Data","Snapshot API-Football","Sem CLOSE","Outra CLOSE"])
-    order = c4.selectbox("Ordenar", ["Mais recentes","Maior prob. CLV+","Maior CLV"])
+    st.subheader("🧾 Paper trades")
+    c1, c2, c3, c4 = st.columns(4)
+    statuses = c1.multiselect("Status", ["OPEN", "RESOLVED", "VOID"], default=[], placeholder="All")
+    only_signals = c2.toggle("Only signals")
+    ctype = c3.selectbox("CLOSE type", ["All", "CLOSE pré-jogo", "CLOSE Football-Data", "Snapshot API-Football", "Sem CLOSE", "Outra CLOSE"])
+    order = c4.selectbox("Order by", ["Most recent", "Highest CLV+ probability", "Highest CLV"])
     shown = pv.copy()
-    if statuses: shown = shown[shown["status"].isin(statuses)]
-    if only_signals: shown = shown[shown["signal"] == 1]
-    if ctype != "Todas": shown = shown[shown["close_group"] == ctype]
-    if order == "Maior prob. CLV+": shown = shown.sort_values("clv_probability", ascending=False)
-    elif order == "Maior CLV": shown = shown.sort_values("clv_display", ascending=False)
-    st.caption(f"{len(shown)} registos.")
+    if statuses:
+        shown = shown[shown["status"].isin(statuses)]
+    if only_signals:
+        shown = shown[shown["signal"] == 1]
+    if ctype != "All":
+        shown = shown[shown["close_group"] == ctype]
+    if order == "Highest CLV+ probability":
+        shown = shown.sort_values("clv_probability", ascending=False)
+    elif order == "Highest CLV":
+        shown = shown.sort_values("clv_display", ascending=False)
+    st.caption(f"{len(shown)} records.")
     st.dataframe(paper_table(shown), use_container_width=True, hide_index=True)
 
-elif page == "📅 Próximos Jogos":
-    st.subheader("📅 Próximos jogos")
+elif page == "📅 Upcoming Matches":
+    st.subheader("📅 Upcoming matches")
     future = uv[uv.get("minutes_to_kickoff", pd.Series(np.nan, index=uv.index)) >= 0].copy()
-    horizon = st.selectbox("Horizonte", ["Todos","24 horas","3 dias","7 dias"])
-    limits = {"24 horas":1440, "3 dias":4320, "7 dias":10080}
-    if horizon in limits: future = future[future["minutes_to_kickoff"] <= limits[horizon]]
+    horizon = st.selectbox("Horizon", ["All", "24 hours", "3 days", "7 days"])
+    limits = {"24 hours": 1440, "3 days": 4320, "7 days": 10080}
+    if horizon in limits:
+        future = future[future["minutes_to_kickoff"] <= limits[horizon]]
     st.dataframe(upcoming_table(future), use_container_width=True, hide_index=True)
 
 elif page == "📈 CLV & Performance":
     st.subheader("📈 CLV & Performance")
-    st.info("clv_probability = probabilidade prevista de obter CLV positivo; não é probabilidade de Over 2.5.")
+    st.info("clv_probability = model-implied probability of positive CLV; it is not the same as the match-over-2.5 probability.")
     allc = pv[pv["clv_display"].notna()].copy()
     high = allc[allc["close_high_quality"]]
-    pre = allc[allc["close_group"]=="CLOSE pré-jogo"]
-    fd = allc[allc["close_group"]=="CLOSE Football-Data"]
-    prov = allc[allc["close_group"]=="Snapshot API-Football"]
+    pre = allc[allc["close_group"] == "CLOSE pré-jogo"]
+    fd = allc[allc["close_group"] == "CLOSE Football-Data"]
+    prov = allc[allc["close_group"] == "Snapshot API-Football"]
+
     c = st.columns(4)
-    c[0].metric("CLOSE/snapshots", len(allc)); c[1].metric("✅ Alta qualidade", len(high))
-    c[2].metric("🟢 The Odds API", len(pre)); c[3].metric("🟡 Provisórias", len(prov))
-    choice = st.selectbox("Amostra para avaliar o modelo", ["Alta qualidade (recomendado)","The Odds API pré-jogo","Football-Data closing","Todas incluindo provisórias","Só snapshots API-Football"])
-    if choice == "Alta qualidade (recomendado)": rows = high; st.success("Amostra recomendada para threshold e calibração.")
-    elif choice == "The Odds API pré-jogo": rows = pre; st.success("Amostra prospetiva mais limpa.")
-    elif choice == "Football-Data closing": rows = fd; st.info("Closing recuperada pós-jogo; a agregação pode diferir da OPEN.")
-    elif choice == "Só snapshots API-Football": rows = prov; st.warning("Snapshots provisórias podem estar horas antes do kickoff.")
-    else: rows = allc; st.warning("Vista mista. Usa 'Alta qualidade' para decisões do modelo.")
+    c[0].metric("CLOSE/snapshots", len(allc))
+    c[1].metric("✅ High quality", len(high))
+    c[2].metric("🟢 The Odds API", len(pre))
+    c[3].metric("🟡 Provisional", len(prov))
+
+    choice = st.selectbox(
+        "Sample to evaluate the model",
+        ["High quality (recommended)", "The Odds API pre-match", "Football-Data closing", "All including provisional", "Only API-Football snapshots"],
+    )
+    if choice == "High quality (recommended)":
+        rows = high
+        st.success("Recommended sample for threshold and calibration work.")
+    elif choice == "The Odds API pre-match":
+        rows = pre
+        st.success("Cleaner prospective sample.")
+    elif choice == "Football-Data closing":
+        rows = fd
+        st.info("Closing recovered post-match; aggregation may differ from the OPEN prices.")
+    elif choice == "Only API-Football snapshots":
+        rows = prov
+        st.warning("Snapshots are provisional and may be replaced by Football-Data when a closing price is available.")
+    else:
+        rows = allc
+        st.warning("Mixed view. Prefer 'High quality' for decision-making.")
+
     c = st.columns(4)
-    c[0].metric("Jogos", len(rows)); c[1].metric("CLV médio", pct(rows["clv_display"].mean() if len(rows) else np.nan))
-    c[2].metric("CLV positivo", pct((rows["clv_display"]>0).mean() if len(rows) else np.nan)); c[3].metric("CLV mediano", pct(rows["clv_display"].median() if len(rows) else np.nan))
+    c[0].metric("Matches", len(rows))
+    c[1].metric("Average CLV", pct(rows["clv_display"].mean() if len(rows) else np.nan))
+    c[2].metric("Positive CLV", pct((rows["clv_display"] > 0).mean() if len(rows) else np.nan))
+    c[3].metric("Median CLV", pct(rows["clv_display"].median() if len(rows) else np.nan))
+
     brier, logloss, auc = quality_metrics(rows)
     c = st.columns(3)
     c[0].metric("Brier score", f"{brier:.3f}" if not pd.isna(brier) else "—")
     c[1].metric("Log loss", f"{logloss:.3f}" if not pd.isna(logloss) else "—")
     c[2].metric("AUC", f"{auc:.3f}" if not pd.isna(auc) else "—")
-    if len(rows) < 50: st.warning("Amostra pequena: não alterar o threshold real.")
-    elif len(rows) < 200: st.info("Já mostra tendências, mas ainda é cedo para mexer no threshold.")
-    else: st.success("Amostra suficiente para uma avaliação inicial mais robusta.")
+
+    if len(rows) < 50:
+        st.warning("Sample is small: avoid changing the real threshold yet.")
+    elif len(rows) < 200:
+        st.info("Signals are emerging, but the sample is still too early for confident threshold changes.")
+    else:
+        st.success("Sample size is enough for an initial calibration review.")
+
     if len(rows):
-        bins=[-.001,.30,.35,.40,.45,.50,.55,1.001]; labels=["<30%","30–35%","35–40%","40–45%","45–50%","50–55%","55%+"]
-        cal=rows.copy(); cal["Faixa"]=pd.cut(cal["clv_probability"],bins=bins,labels=labels,include_lowest=True); cal["CLV positivo"]=(cal["clv_display"]>0).astype(int)
-        ct=(cal.dropna(subset=["Faixa"]).groupby("Faixa",observed=False).agg(Jogos=("id","count"),Prob=("clv_probability","mean"),Pos=("CLV positivo","mean"),CLV=("clv_display","mean")).reset_index())
-        ct["Prob. prevista %"]=(ct["Prob"]*100).round(1); ct["CLV positivo %"]=(ct["Pos"]*100).round(1); ct["CLV médio %"]=(ct["CLV"]*100).round(2)
-        st.markdown("#### Calibração por faixa")
-        st.dataframe(ct[["Faixa","Jogos","Prob. prevista %","CLV positivo %","CLV médio %"]],use_container_width=True,hide_index=True)
-        st.markdown("#### 🧪 Teste shadow de thresholds")
-        tt=threshold_test(rows)
-        st.dataframe(tt[["Threshold","Tipo","Jogos","Cobertura %","Prob. média %","CLV positivo %","CLV médio %","CLV mediano %"]],use_container_width=True,hide_index=True)
-        st.bar_chart(tt.set_index("Threshold")[["CLV positivo %","CLV médio %"]])
-    resolved = pv[(pv["signal"]==1)&(pv["status"]=="RESOLVED")]
-    profit = pd.to_numeric(resolved.get("profit",pd.Series(dtype=float)),errors="coerce").fillna(0).sum()
-    stake = pd.to_numeric(resolved.get("planned_stake",pd.Series(dtype=float)),errors="coerce").fillna(0).sum()
-    c=st.columns(4)
-    c[0].metric("Sinais resolvidos",len(resolved)); c[1].metric("Lucro",units(profit),euros(profit,unit_value))
-    c[2].metric("ROI",pct(profit/stake if stake>0 else np.nan))
-    c[3].metric("Over 2.5 acertado",pct(pd.to_numeric(resolved.get("result_over25",pd.Series(dtype=float)),errors="coerce").mean()))
+        bins = [-.001, .30, .35, .40, .45, .50, .55, 1.001]
+        labels = ["<30%", "30–35%", "35–40%", "40–45%", "45–50%", "50–55%", "55%+"]
+        cal = rows.copy()
+        cal["Faixa"] = pd.cut(cal["clv_probability"], bins=bins, labels=labels, include_lowest=True)
+        cal["CLV positivo"] = (cal["clv_display"] > 0).astype(int)
+        ct = (
+            cal.dropna(subset=["Faixa"])
+            .groupby("Faixa", observed=False)
+            .agg(Jogos=("id", "count"), Prob=("clv_probability", "mean"), Pos=("CLV positivo", "mean"), CLV=("clv_display", "mean"))
+            .reset_index()
+        )
+        ct["Prob. prevista %"] = (ct["Prob"] * 100).round(1)
+        ct["CLV positivo %"] = (ct["Pos"] * 100).round(1)
+        ct["CLV médio %"] = (ct["CLV"] * 100).round(2)
+        st.markdown("#### Calibration by bucket")
+        st.dataframe(ct[["Faixa", "Jogos", "Prob. prevista %", "CLV positivo %", "CLV médio %"]], use_container_width=True, hide_index=True)
+
+        st.markdown("#### 🧪 Shadow threshold test")
+        tt = threshold_test(rows)
+        st.dataframe(tt[["Threshold", "Tipo", "Jogos", "Cobertura %", "Prob. média %", "CLV positivo %", "CLV médio %", "CLV mediano %"]], use_container_width=True, hide_index=True)
+        st.bar_chart(tt.set_index("Threshold")[["CLV positivo %", "CLV médio %"]])
+
+    resolved = pv[(pv["signal"] == 1) & (pv["status"] == "RESOLVED")]
+    profit = pd.to_numeric(resolved.get("profit", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    stake = pd.to_numeric(resolved.get("planned_stake", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    c = st.columns(4)
+    c[0].metric("Resolved signals", len(resolved))
+    c[1].metric("Profit", units(profit), euros(profit, unit_value))
+    c[2].metric("ROI", pct(profit / stake if stake > 0 else np.nan))
+    c[3].metric("Over 2.5 hit", pct(pd.to_numeric(resolved.get("result_over25", pd.Series(dtype=float)), errors="coerce").mean()))
 
 else:
-    st.subheader("⚙️ Estado do sistema")
-    st.success("✅ Ligação à Turso ativa")
+    st.subheader("⚙️ System status")
+    st.success("✅ Turso connection active")
     summary = history.iloc[0] if len(history) else pd.Series(dtype=object)
-    c=st.columns(4)
-    c[0].metric("Jogos históricos", int(summary.get("total_matches") or 0))
-    c[1].metric("Ligas históricas", int(summary.get("total_leagues") or 0))
-    c[2].metric("Último histórico", str(summary.get("latest_match") or "—"))
-    c[3].metric("Upcoming ativos", len(upcoming))
-    c=st.columns(4)
-    c[0].metric("🟢 The Odds API", int((paper["close_group"]=="CLOSE pré-jogo").sum()) if len(paper) else 0)
-    c[1].metric("🟠 Football-Data", int((paper["close_group"]=="CLOSE Football-Data").sum()) if len(paper) else 0)
-    c[2].metric("🟡 Provisórias", int((paper["close_group"]=="Snapshot API-Football").sum()) if len(paper) else 0)
-    c[3].metric("⚪ Sem CLOSE", int((paper["close_group"]=="Sem CLOSE").sum()) if len(paper) else 0)
+    c = st.columns(4)
+    c[0].metric("Historical matches", int(summary.get("total_matches") or 0))
+    c[1].metric("Historical leagues", int(summary.get("total_leagues") or 0))
+    c[2].metric("Last historical date", str(summary.get("latest_match") or "—"))
+    c[3].metric("Active upcoming", len(upcoming))
+
+    c = st.columns(4)
+    c[0].metric("🟢 The Odds API", int((paper["close_group"] == "CLOSE pré-jogo").sum()) if len(paper) else 0)
+    c[1].metric("🟠 Football-Data", int((paper["close_group"] == "CLOSE Football-Data").sum()) if len(paper) else 0)
+    c[2].metric("🟡 Provisional", int((paper["close_group"] == "Snapshot API-Football").sum()) if len(paper) else 0)
+    c[3].metric("⚪ No CLOSE", int((paper["close_group"] == "Sem CLOSE").sum()) if len(paper) else 0)
+
     now = pd.Timestamp.now(tz=TZ).tz_localize(None)
-    overdue = paper[(paper["status"]=="OPEN") & paper["fixture_datetime"].notna() & (paper["fixture_datetime"] < now-pd.Timedelta(hours=3))] if len(paper) else pd.DataFrame()
-    stale = upcoming[upcoming["current_age_hours"].notna() & (upcoming["current_age_hours"]>24)] if len(upcoming) else pd.DataFrame()
-    c=st.columns(3)
-    c[0].metric("OPEN atrasados >3h",len(overdue)); c[1].metric("Upcoming stale >24h",len(stale)); c[2].metric("CLOSE alta qualidade",int(paper["close_high_quality"].sum()) if len(paper) else 0)
-    if len(overdue): st.warning("Há jogos antigos ainda OPEN: verifica o workflow de resultados.")
-    if len(stale): st.warning("Há upcoming sem atualização há mais de 24h.")
-    if len(paper) and (paper["close_group"]=="Snapshot API-Football").any(): st.info("Snapshots API-Football são provisórias e são substituídas por Football-Data quando houver closing.")
-    with st.expander("Tabelas disponíveis na Turso"): st.write(sorted(tabs))
+    overdue = paper[(paper["status"] == "OPEN") & paper["fixture_datetime"].notna() & (paper["fixture_datetime"] < now - pd.Timedelta(hours=3))] if len(paper) else pd.DataFrame()
+    stale = upcoming[upcoming["current_age_hours"].notna() & (upcoming["current_age_hours"] > 24)] if len(upcoming) else pd.DataFrame()
+    c = st.columns(3)
+    c[0].metric("OPEN older than 3h", len(overdue))
+    c[1].metric("Upcoming stale >24h", len(stale))
+    c[2].metric("High-quality CLOSE", int(paper["close_high_quality"].sum()) if len(paper) else 0)
+
+    if len(overdue):
+        st.warning("There are old OPEN matches: verify the result workflow.")
+    if len(stale):
+        st.warning("Some upcoming matches have not been refreshed in more than 24h.")
+    if len(paper) and (paper["close_group"] == "Snapshot API-Football").any():
+        st.info("API-Football snapshots are provisional and are replaced by Football-Data when a closing value is available.")
+    with st.expander("Turso tables available"):
+        st.write(sorted(tabs))
 
 st.divider()
-st.caption("FootballAI · Paper trading apenas · " + datetime.now(TZ).strftime("Atualizado no ecrã em %d/%m/%Y às %H:%M"))
+st.caption("FootballAI · paper trading only · " + datetime.now(TZ).strftime("Updated on screen at %d/%m/%Y at %H:%M"))
