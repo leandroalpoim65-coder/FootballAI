@@ -105,16 +105,19 @@ LEAGUE_ALIASES = {
     "spain": "Spain",
     "la liga": "Spain",
     "laliga": "Spain",
+    "la liga - spain": "Spain",
 
     # Espanha - Segunda Division
     "spain segunda division": "Spain Segunda Division",
     "segunda division": "Spain Segunda Division",
     "segunda división": "Spain Segunda Division",
+    "la liga 2 - spain": "Spain Segunda Division",
     "sp2": "Spain Segunda Division",
 
     # Italia - Serie A
     "italy": "Italy",
     "serie a": "Italy",
+    "serie a - italy": "Italy",
 
     # Alemanha - Bundesliga
     "germany": "Germany",
@@ -131,6 +134,11 @@ LEAGUE_ALIASES = {
     # Franca - Ligue 1
     "france": "France",
     "ligue 1": "France",
+    "ligue 1 - france": "France",
+
+    # França - Ligue 2
+    "france ligue 2": "France Ligue 2",
+    "f2": "France Ligue 2",
 
     # Paises Baixos - Eredivisie
     "netherlands": "Netherlands",
@@ -142,15 +150,18 @@ LEAGUE_ALIASES = {
     "portugal": "Portugal",
     "primeira liga": "Portugal",
     "liga portugal": "Portugal",
+    "primeira liga - portugal": "Portugal",
 
     # Belgica - First Division A
     "belgium first division a": "Belgium First Division A",
     "belgium first division": "Belgium First Division A",
     "belgium first div": "Belgium First Division A",
+    "belgium first div a": "Belgium First Division A",
     "b1": "Belgium First Division A",
 
     # Turquia - Super Lig
     "turkey super lig": "Turkey Super Lig",
+    "turkey super league": "Turkey Super Lig",
     "super lig": "Turkey Super Lig",
     "süper lig": "Turkey Super Lig",
     "t1": "Turkey Super Lig",
@@ -211,6 +222,18 @@ TEAM_ALIASES = {
     # Alemanha - 2. Bundesliga
     ("Germany 2 Bundesliga", "eintracht braunschweig"): "Braunschweig",
     ("Germany 2 Bundesliga", "hertha berlin"): "Hertha",
+    ("Germany 2 Bundesliga", "dynamo dresden"): "Dresden",
+    ("Germany 2 Bundesliga", "greuther fürth"): "Greuther Furth",
+    ("Germany 2 Bundesliga", "1. fc nürnberg"): "Nurnberg",
+    ("Germany 2 Bundesliga", "sv darmstadt 98"): "Darmstadt",
+    ("Germany 2 Bundesliga", "arminia bielefeld"): "Bielefeld",
+    ("Germany 2 Bundesliga", "vfl osnabrück"): "Osnabruck",
+    ("Germany 2 Bundesliga", "1. fc kaiserslautern"): "Kaiserslautern",
+    ("Germany 2 Bundesliga", "1. fc heidenheim"): "Heidenheim",
+    ("Germany 2 Bundesliga", "1. fc magdeburg"): "Magdeburg",
+    ("Germany 2 Bundesliga", "fc st. pauli"): "St Pauli",
+    ("Germany 2 Bundesliga", "vfl bochum"): "Bochum",
+    ("Germany 2 Bundesliga", "karlsruher sc"): "Karlsruhe",
 
     # Países Baixos
     ("Netherlands", "ado den haag"): "Den Haag",
@@ -222,6 +245,17 @@ TEAM_ALIASES = {
 
     # Espanha
     ("Spain", "dep. a coruna"): "La Coruna",
+    ("Spain", "deportivo la coruña"): "La Coruna",
+    ("Spain", "ca osasuna"): "Osasuna",
+    ("Spain", "alavés"): "Alaves",
+    ("Spain", "atlético madrid"): "Ath Madrid",
+    ("Spain", "celta vigo"): "Celta",
+    ("Spain", "elche cf"): "Elche",
+    ("Spain", "espanyol"): "Espanol",
+    ("Spain", "málaga"): "Malaga",
+    ("Spain", "real betis"): "Betis",
+    ("Spain", "real sociedad"): "Sociedad",
+    ("Spain", "rayo vallecano"): "Vallecano",
     ("Spain", "athletic bilbao"): "Ath Bilbao",
     ("Spain", "athletic club"): "Ath Bilbao",
     ("Spain", "real racing club de santander"): "Santander",
@@ -237,15 +271,68 @@ TEAM_ALIASES = {
     ("France Ligue 2", "stade laval"): "Laval",
 
     # Espanha - Segunda Division
+    ("Spain Segunda Division", "cádiz cf"): "Cadiz",
+    ("Spain Segunda Division", "cd castellón"): "Castellon",
+    ("Spain Segunda Division", "sd eibar"): "Eibar",
+    ("Spain Segunda Division", "leganés"): "Leganes",
+    ("Spain Segunda Division", "ad ceuta fc"): "Ceuta",
+    ("Spain Segunda Division", "almería"): "Almeria",
+    ("Spain Segunda Division", "burgos cf"): "Burgos",
+    ("Spain Segunda Division", "andorra cf"): "Andorra",
+    ("Spain Segunda Division", "girona fc"): "Girona",
+    ("Spain Segunda Division", "granada cf"): "Granada",
+    ("Spain Segunda Division", "real valladolid cf"): "Valladolid",
+    ("Spain Segunda Division", "sabadell fc"): "Sabadell",
+    ("Spain Segunda Division", "real sociedad b"): "Sociedad B",
     ("Spain Segunda Division", "sporting gijón"): "Sp Gijon",
     ("Spain Segunda Division", "sporting gijon"): "Sp Gijon",
     ("Spain Segunda Division", "real sporting de gijon"): "Sp Gijon",
 
     # Portugal
+    ("Portugal", "famalicão"): "Famalicao",
+    ("Portugal", "fc porto"): "Porto",
+    ("Portugal", "sporting lisbon"): "Sp Lisbon",
+    ("Portugal", "moreirense fc"): "Moreirense",
+    ("Portugal", "rio ave fc"): "Rio Ave",
+    ("Portugal", "braga"): "Sp Braga",
+    ("Portugal", "cs maritimo"): "Maritimo",
     ("Portugal", "vitória sc"): "Guimaraes",
     ("Portugal", "vitoria sc"): "Guimaraes",
     ("Portugal", "vitória guimarães"): "Guimaraes",
     ("Portugal", "vitoria guimaraes"): "Guimaraes",
+
+    # Itália
+    ("Italy", "atalanta bc"): "Atalanta",
+    ("Italy", "ac milan"): "Milan",
+    ("Italy", "as roma"): "Roma",
+    ("Italy", "inter milan"): "Inter",
+
+    # Inglaterra - Championship
+    ("England Championship", "charlton athletic"): "Charlton",
+
+    # Bélgica
+    ("Belgium First Division A", "kv kortrijk"): "Kortrijk",
+    ("Belgium First Division A", "sk beveren"): "Waasland-Beveren",
+    ("Belgium First Division A", "sv zulte-waregem"): "Waregem",
+    ("Belgium First Division A", "sint truiden"): "St Truiden",
+
+    # Turquia
+    ("Turkey Super Lig", "gazişehir gaziantep"): "Gaziantep",
+    ("Turkey Super Lig", "kasimpasa sk"): "Kasimpasa",
+    ("Turkey Super Lig", "eyüpspor"): "Eyupspor",
+    ("Turkey Super Lig", "torku konyaspor"): "Konyaspor",
+
+    # Inglaterra - Premier League
+    ("England", "manchester united"): "Man United",
+
+    # França
+    ("France", "paris saint germain"): "Paris SG",
+    ("France", "as monaco"): "Monaco",
+    ("France", "rc lens"): "Lens",
+
+    # Países Baixos
+    ("Netherlands", "fc twente enschede"): "Twente",
+    ("Netherlands", "sc telstar"): "Telstar",
 }
 
 

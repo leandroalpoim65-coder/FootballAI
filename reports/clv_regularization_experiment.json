@@ -1,0 +1,243 @@
+{
+  "generated_at": "2026-11-02T18:33:39+00:00",
+  "experiment": "Nested chronological tuning of CLV logistic regularization C",
+  "target": "CLV positive (opening Over 2.5 odds exceed closing odds)",
+  "design": "Expanding seasons; C selected by earlier seasons' mean log loss only. First test fold uses the frozen production C because no prior validation season exists.",
+  "data": {
+    "matches": 45200,
+    "date_min": "2019-07-26",
+    "date_max": "2026-05-31",
+    "seasons": [
+      "2019/2020",
+      "2020/2021",
+      "2021/2022",
+      "2022/2023",
+      "2023/2024",
+      "2024/2025",
+      "2025/2026"
+    ],
+    "test_seasons": [
+      "2022/2023",
+      "2023/2024",
+      "2024/2025",
+      "2025/2026"
+    ],
+    "candidate_C_values": [
+      0.01,
+      0.03,
+      0.1,
+      0.3,
+      1.0,
+      3.0
+    ]
+  },
+  "pooled": {
+    "selected": {
+      "brier": 0.24185373686600423,
+      "log_loss": 0.6766933091726315,
+      "auc": 0.5743416261978564
+    },
+    "production": {
+      "brier": 0.24266848240174535,
+      "log_loss": 0.6785174962427801,
+      "auc": 0.5698457107771245
+    },
+    "baseline": {
+      "brier": 0.2449518290780618,
+      "log_loss": 0.6830268803741555,
+      "auc": null
+    },
+    "selected_strategy": {
+      "signals": 4246,
+      "profit_units": -75.95000000000002,
+      "roi_pct": -1.7887423457371647
+    },
+    "production_strategy": {
+      "signals": 4168,
+      "profit_units": -86.68000000000002,
+      "roi_pct": -2.0796545105566224
+    }
+  },
+  "folds": [
+    {
+      "test_season": "2022/2023",
+      "train_seasons": [
+        "2019/2020",
+        "2020/2021",
+        "2021/2022"
+      ],
+      "tuning_seasons": [],
+      "train_matches": 19304,
+      "test_matches": 6628,
+      "training_clv_positive_rate": 0.45829879817654373,
+      "selected_C": 0.1,
+      "production_C": 0.1,
+      "selected_model": {
+        "brier": 0.23420615953698015,
+        "log_loss": 0.6606514423011395,
+        "auc": 0.6125837157803037
+      },
+      "production_model": {
+        "brier": 0.23420615953698015,
+        "log_loss": 0.6606514423011395,
+        "auc": 0.6125837157803037
+      },
+      "constant_baseline": {
+        "brier": 0.24343398323186669,
+        "log_loss": 0.6799886253516845,
+        "auc": 0.5
+      },
+      "selected_strategy": {
+        "signals": 1330,
+        "profit_units": -36.870000000000005,
+        "roi_pct": -2.77218045112782,
+        "selected_clv_positive_rate": 0.5421052631578948
+      },
+      "production_strategy": {
+        "signals": 1330,
+        "profit_units": -36.870000000000005,
+        "roi_pct": -2.77218045112782,
+        "selected_clv_positive_rate": 0.5421052631578948
+      }
+    },
+    {
+      "test_season": "2023/2024",
+      "train_seasons": [
+        "2019/2020",
+        "2020/2021",
+        "2021/2022",
+        "2022/2023"
+      ],
+      "tuning_seasons": [
+        "2022/2023"
+      ],
+      "train_matches": 25932,
+      "test_matches": 6624,
+      "training_clv_positive_rate": 0.44350609285824466,
+      "selected_C": 0.3,
+      "production_C": 0.1,
+      "selected_model": {
+        "brier": 0.24106250808138435,
+        "log_loss": 0.6751395664558762,
+        "auc": 0.594984883856392
+      },
+      "production_model": {
+        "brier": 0.24100157510461973,
+        "log_loss": 0.6750069497095911,
+        "auc": 0.5948718432595901
+      },
+      "constant_baseline": {
+        "brier": 0.24440703190102417,
+        "log_loss": 0.681926997153911,
+        "auc": 0.5
+      },
+      "selected_strategy": {
+        "signals": 1598,
+        "profit_units": -12.140000000000004,
+        "roi_pct": -0.7596996245306636,
+        "selected_clv_positive_rate": 0.5413016270337923
+      },
+      "production_strategy": {
+        "signals": 1582,
+        "profit_units": -13.520000000000008,
+        "roi_pct": -0.8546144121365365,
+        "selected_clv_positive_rate": 0.5410872313527181
+      }
+    },
+    {
+      "test_season": "2024/2025",
+      "train_seasons": [
+        "2019/2020",
+        "2020/2021",
+        "2021/2022",
+        "2022/2023",
+        "2023/2024"
+      ],
+      "tuning_seasons": [
+        "2022/2023",
+        "2023/2024"
+      ],
+      "train_matches": 32556,
+      "test_matches": 6515,
+      "training_clv_positive_rate": 0.43918171765573166,
+      "selected_C": 0.01,
+      "production_C": 0.1,
+      "selected_model": {
+        "brier": 0.24303543687424917,
+        "log_loss": 0.6792418937235187,
+        "auc": 0.5553899659539964
+      },
+      "production_model": {
+        "brier": 0.24343763053600906,
+        "log_loss": 0.6801892673422455,
+        "auc": 0.5551983900196851
+      },
+      "constant_baseline": {
+        "brier": 0.24226334606566038,
+        "log_loss": 0.6776153371133586,
+        "auc": 0.5
+      },
+      "selected_strategy": {
+        "signals": 977,
+        "profit_units": -13.64,
+        "roi_pct": -1.3961105424769704,
+        "selected_clv_positive_rate": 0.4820880245649949
+      },
+      "production_strategy": {
+        "signals": 1015,
+        "profit_units": -42.32000000000001,
+        "roi_pct": -4.169458128078818,
+        "selected_clv_positive_rate": 0.4886699507389163
+      }
+    },
+    {
+      "test_season": "2025/2026",
+      "train_seasons": [
+        "2019/2020",
+        "2020/2021",
+        "2021/2022",
+        "2022/2023",
+        "2023/2024",
+        "2024/2025"
+      ],
+      "tuning_seasons": [
+        "2022/2023",
+        "2023/2024",
+        "2024/2025"
+      ],
+      "train_matches": 39071,
+      "test_matches": 6129,
+      "training_clv_positive_rate": 0.4336464385349748,
+      "selected_C": 0.01,
+      "production_C": 0.1,
+      "selected_model": {
+        "brier": 0.2497229596515122,
+        "log_loss": 0.693011380151748,
+        "auc": 0.5585992835935567
+      },
+      "production_model": {
+        "brier": 0.25280371976332067,
+        "log_loss": 0.6998551495382638,
+        "auc": 0.5582141728867945
+      },
+      "constant_baseline": {
+        "brier": 0.25003985087526753,
+        "log_loss": 0.6932535707125349,
+        "auc": 0.5
+      },
+      "selected_strategy": {
+        "signals": 341,
+        "profit_units": -13.3,
+        "roi_pct": -3.900293255131965,
+        "selected_clv_positive_rate": 0.5571847507331378
+      },
+      "production_strategy": {
+        "signals": 241,
+        "profit_units": 6.029999999999999,
+        "roi_pct": 2.50207468879668,
+        "selected_clv_positive_rate": 0.5809128630705395
+      }
+    }
+  ],
+  "warning": "Research only. The tuned C is not adopted in production. Probability metrics do not establish profitability."
+}
