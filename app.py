@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import libsql
+from libsql_client import create_client_sync
 
 
 st.set_page_config(
@@ -16,6 +17,7 @@ st.set_page_config(
 )
 
 ROOT_DIR = Path(__file__).resolve().parent
+LOCAL_DB_PATH = ROOT_DIR / "database" / "football.db"
 SHADOW_TABLE = "goal_model_home_o25_shadow"
 MODEL_ORDER = ["V2_FROZEN", "V5_HOME_FROZEN", "V6_FROZEN", "V6_TRAINED"]
 MODEL_COLUMN_MAP = {
@@ -88,24 +90,134 @@ def load_shadow() -> pd.DataFrame:
     url = read_setting("TURSO_DATABASE_URL")
     token = read_setting("TURSO_AUTH_TOKEN")
     if not url or not token:
-        st.error(
-            "Turso credentials were not found in this session. "
-            "Define TURSO_DATABASE_URL and TURSO_AUTH_TOKEN and restart the app."
-        )
         return pd.DataFrame()
 
     try:
-        connection = libsql.connect(database=url, auth_token=token)
+        if url.startswith("libsql://"):
+            url = "https://" + url.removeprefix("libsql://")
+        connection = create_client_sync(url, auth_token=token)
         try:
-            return pd.read_sql_query(
-                f"SELECT * FROM {SHADOW_TABLE} ORDER BY fixture_date, fixture_time",
-                connection,
+            result = connection.execute(
+                f"SELECT * FROM {SHADOW_TABLE} ORDER BY fixture_date, fixture_time"
+            )
+            return pd.DataFrame(
+                [row.astuple() for row in result.rows],
+                columns=result.columns,
             )
         finally:
             connection.close()
     except Exception as exc:
-        st.error(f"Unable to read data from Turso: {exc}")
+        st.warning(f"Unable to read forecasts from Turso; showing local data instead. Details: {exc}")
         return pd.DataFrame()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_local_paper_trades() -> pd.DataFrame:
+    if not LOCAL_DB_PATH.exists():
+        return pd.DataFrame()
+
+    connection = sqlite3.connect(LOCAL_DB_PATH)
+    try:
+        return pd.read_sql_query(
+            """
+            SELECT
+                id, prediction_timestamp, fixture_date, fixture_time, league,
+                home_team, away_team, odd_over25_open, fair_probability_open,
+                clv_probability, signal, planned_stake, status, home_goals,
+                away_goals, result_over25, clv, profit
+            FROM paper_trades
+            ORDER BY fixture_date DESC, fixture_time DESC
+            """,
+            connection,
+        )
+    except (sqlite3.Error, pd.errors.DatabaseError):
+        return pd.DataFrame()
+    finally:
+        connection.close()
+
+
+def render_local_dashboard() -> None:
+    data = load_local_paper_trades()
+    if data.empty:
+        st.info(f"No local paper-trade data found in `{LOCAL_DB_PATH}`.")
+        st.stop()
+
+    data["signal"] = pd.to_numeric(data["signal"], errors="coerce").fillna(0).astype(int)
+    data["odd_over25_open"] = pd.to_numeric(data["odd_over25_open"], errors="coerce")
+    data["clv_probability"] = pd.to_numeric(data["clv_probability"], errors="coerce")
+    data["fair_probability_open"] = pd.to_numeric(
+        data["fair_probability_open"], errors="coerce"
+    )
+    data["ev"] = data["clv_probability"] * data["odd_over25_open"] - 1
+    data["league"] = data["league"].fillna("Unknown").astype(str)
+    data["status"] = data["status"].fillna("Unknown").astype(str)
+
+    with st.sidebar:
+        st.header("Local paper trades")
+        leagues = sorted(data["league"].unique().tolist())
+        selected_leagues = st.multiselect("Leagues", leagues, default=leagues)
+        statuses = sorted(data["status"].unique().tolist())
+        selected_statuses = st.multiselect("Status", statuses, default=statuses)
+        signals_only = st.checkbox("Signals only", value=False)
+
+    filtered = data[
+        data["league"].isin(selected_leagues)
+        & data["status"].isin(selected_statuses)
+    ].copy()
+    if signals_only:
+        filtered = filtered[filtered["signal"] == 1]
+
+    resolved = filtered[pd.to_numeric(filtered["result_over25"], errors="coerce").notna()]
+    hit_rate = pd.to_numeric(resolved["result_over25"], errors="coerce").mean()
+    net_profit = pd.to_numeric(filtered["profit"], errors="coerce").sum()
+
+    metrics = st.columns(5)
+    metrics[0].metric("Trades", f"{len(filtered):,}".replace(",", " "))
+    metrics[1].metric("Signals", int((filtered["signal"] == 1).sum()))
+    metrics[2].metric("Resolved", len(resolved))
+    metrics[3].metric("Over 2.5 hit rate", fmt_pct(hit_rate))
+    metrics[4].metric("Net profit", f"{net_profit:.2f}")
+
+    if filtered.empty:
+        st.warning("No local paper trades match the selected filters.")
+        return
+
+    show = filtered.copy()
+    show["Game"] = show["home_team"].astype(str) + " — " + show["away_team"].astype(str)
+    show["Date"] = show["fixture_date"].apply(fmt_date)
+    show["Model probability"] = show["clv_probability"].apply(fmt_pct)
+    show["Market probability"] = show["fair_probability_open"].apply(fmt_pct)
+    show["Odds"] = show["odd_over25_open"].apply(fmt_odd)
+    show["EV"] = show["ev"].apply(fmt_pct)
+    show["Result"] = show["result_over25"].map({1: "Over 2.5", 0: "Under 2.5"}).fillna("—")
+    show["Profit"] = pd.to_numeric(show["profit"], errors="coerce").map(
+        lambda value: f"{value:.2f}" if pd.notna(value) else "—"
+    )
+
+    st.subheader("Local paper-trading history")
+    st.dataframe(
+        show[
+            [
+                "Date", "fixture_time", "league", "Game", "status", "signal",
+                "Odds", "Model probability", "Market probability", "EV",
+                "Result", "clv", "Profit",
+            ]
+        ].rename(
+            columns={
+                "fixture_time": "Time",
+                "league": "League",
+                "status": "Status",
+                "signal": "Signal",
+                "clv": "CLV",
+            }
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+    st.caption(
+        "Model probability and EV use the saved paper-trade prediction; market probability is the "
+        "no-vig opening-market estimate. This local view does not include the separate Turso model comparison."
+    )
 
 
 def latest_model_rows(data: pd.DataFrame) -> pd.DataFrame:
@@ -188,27 +300,25 @@ def build_game_view(data: pd.DataFrame) -> pd.DataFrame:
 
 st.title("⚽ FootballAI — Match Analysis")
 st.caption(
-    "Direct Turso dashboard for statistical comparison, EV analysis, and paper-trading decisions. "
-    "Use it as an analysis layer, not as automatic betting advice."
+    "Forecast comparison and local paper-trading analysis. Use it as an analysis layer, "
+    "not as automatic betting advice."
 )
 
-if st.button("🔄 Refresh Turso data", use_container_width=True):
+if st.button("🔄 Refresh data", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
+
+data = latest_model_rows(load_shadow())
+if data.empty:
+    st.info("No Turso forecasts are available. Showing paper-trading records from the local database.")
+    render_local_dashboard()
+    st.stop()
+
+view = build_game_view(data)
 
 # Sidebar filters
 with st.sidebar:
     st.header("Filters")
-
-    data = latest_model_rows(load_shadow())
-    view = build_game_view(data)
-
-    if view.empty:
-        st.info("No forecast data is available right now.")
-        st.warning(
-            "The analysis table is still empty. Run the Home O2.5 shadow process to populate `goal_model_home_o25_shadow`."
-        )
-        st.stop()
 
     leagues = sorted(view["liga"].dropna().astype(str).unique().tolist())
     selected_leagues = st.multiselect("Leagues", leagues, default=leagues)
